@@ -1,4 +1,4 @@
-name: Keep Alive — Ping Every 5 Minutes
+-name: Keep Alive — Ping Every 5 Minutes
 
 on:
   schedule:
@@ -13,7 +13,7 @@ jobs:
         run: |
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             --max-time 30 \
-            https://nse-valuation-terminal.streamlit.app/ || echo "000")
+          https://nse-terminal-danishalam.streamlit.app/ || echo "000")
           echo "HTTP Status: $STATUS at $(date '+%Y-%m-%d %H:%M:%S UTC')"
           if [ "$STATUS" = "200" ] || [ "$STATUS" = "302" ]; then
             echo "APP IS AWAKE"
