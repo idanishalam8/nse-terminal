@@ -318,7 +318,7 @@ with tab2:
             "DIV YLD":   f"{m.get('div_yield',float('nan')):.2f}%" if not pd.isna(m.get("div_yield",float("nan"))) else "N/A",
         })
     st.dataframe(
-        pd.DataFrame(rows).style.applymap(
+        pd.DataFrame(rows).style.map(
             lambda v: "color:#00cc44;font-weight:600" if "CHEAP" in str(v) else
                       ("color:#ff3333;font-weight:600" if "EXP" in str(v) else ""),
             subset=["ZONE"]),
@@ -533,7 +533,7 @@ with tab4:
                         if f < -15: return "color:#00cc44;font-weight:600"
                         return "color:#888"
                     except: return ""
-                st.dataframe(pd_tbl[avl].style.applymap(cpd, subset=["Premium/Disc %"]),
+                st.dataframe(pd_tbl[avl].style.map(cpd, subset=["Premium/Disc %"]),
                              hide_index=True, use_container_width=True)
 
             # Price chart
