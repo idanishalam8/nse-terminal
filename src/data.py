@@ -202,18 +202,22 @@ def _gen_price_fallback(ticker: str) -> pd.DataFrame:
 def gen_synthetic_history(sector: str, years: int = 10) -> pd.DataFrame:
     params = HIST_PARAMS.get(sector, HIST_PARAMS["Information Technology"])
     n      = years * 252
-    dates  = pd.date_range(end=date.today(), periods=n, freq="B")
+    dates  = pd.bdate_range(end=date.today(), periods=n)
+    n      = len(dates)   # sync n to actual dates length
     rng    = np.random.default_rng(abs(hash(sector)) % (2**32))
 
-    def ou(lo, hi, mean, std, n):
-        s = np.zeros(n); s[0] = mean
+    data = {}
+    for metric, (lo, hi, mean, std) in params.items():
+        noise = rng.normal(0, std * 0.04, n)
+        s     = np.full(n, float(mean))
         for i in range(1, n):
-            s[i] = s[i-1] + 0.015*(mean - s[i-1]) + std*0.04*rng.normal()
-            s[i] = np.clip(s[i], lo*0.7, hi*1.3)
-        return s
+            s[i] = float(np.clip(
+                s[i-1] + 0.015*(mean - s[i-1]) + noise[i],
+                lo * 0.7, hi * 1.3
+            ))
+        data[metric] = s
 
-    data = {m: ou(*p, n) for m, p in params.items()}
-    df   = pd.DataFrame(data, index=dates)
+    df = pd.DataFrame(data, index=dates)
     df.index.name = "date"
 
     # Anchor final values to known sector data
