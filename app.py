@@ -59,6 +59,12 @@ tr:first-child td{color:#ff9944 !important;font-weight:600 !important;background
 
 /* Expander */
 .streamlit-expanderHeader{background:#0a0a0a !important;color:#ff6600 !important;font-size:9px !important;text-transform:uppercase !important;letter-spacing:.12em !important;border:1px solid #1a1a1a !important;border-radius:0 !important}
+.streamlit-expanderHeader svg{color:#ff6600 !important;fill:#ff6600 !important}
+[data-testid="stExpander"] summary{background:#0a0a0a !important;border:1px solid #1a1a1a !important;border-radius:0 !important}
+[data-testid="stExpander"] summary span{color:#ff6600 !important;font-size:9px !important;text-transform:uppercase !important;letter-spacing:.12em !important}
+[data-testid="stExpander"] summary svg{color:#ff6600 !important}
+/* Hide broken icon text fallback */
+[data-testid="stExpander"] summary p{display:none !important}
 
 /* Scrollbar */
 ::-webkit-scrollbar{width:3px;height:3px}
