@@ -276,8 +276,9 @@ st.markdown("")
 
 
 # ── TABS ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "SECTOR HEAT MAP", "SECTOR RANKING", "SECTOR DEEP DIVE", "CCA SCREENER", "METHODOLOGY"
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "SECTOR HEAT MAP", "SECTOR RANKING", "SECTOR DEEP DIVE",
+    "CCA SCREENER", "ACTION CENTRE", "METHODOLOGY"
 ])
 
 
@@ -322,6 +323,100 @@ with tab1:
                   .rename(index=lambda s: s.upper())
                   .style.format("{:.2f}", na_rep="N/A"),
             use_container_width=True)
+
+    # ── HEATMAP CELL DECODER ───────────────────────────────────────────────────
+    st.markdown("<div class='bb-sec'>CELL DECODER &nbsp;·&nbsp; CLICK ANY SECTOR + METRIC TO UNDERSTAND WHAT THE NUMBER MEANS</div>", unsafe_allow_html=True)
+
+    dec_c1, dec_c2 = st.columns([1, 1])
+    with dec_c1:
+        dec_sector = st.selectbox("SELECT SECTOR", list(NSE500.keys()),
+                                   format_func=lambda s: s.upper(), key="dec_sec")
+    with dec_c2:
+        dec_metric = st.selectbox("SELECT METRIC", NUMERIC_COLS,
+                                   format_func=lambda m: METRIC_LABELS.get(m, m), key="dec_met")
+
+    if dec_sector and dec_metric:
+        cell_val = None
+        if dec_sector in pct_matrix.index and dec_metric in pct_matrix.columns:
+            v = pct_matrix.loc[dec_sector, dec_metric]
+            if not pd.isna(v):
+                cell_val = float(v)
+
+        raw_val = None
+        if dec_sector in sec_df.index and dec_metric in sec_df.columns:
+            rv = sec_df.loc[dec_sector, dec_metric]
+            if not pd.isna(rv):
+                raw_val = float(rv)
+
+        if cell_val is not None:
+            zl, zc = interpret_score(cell_val)
+            met_lbl = METRIC_LABELS.get(dec_metric, dec_metric)
+            suf = "%" if dec_metric == "div_yield" else "x"
+
+            # Interpretation text
+            if cell_val <= 20:
+                interp = f"This sector's {met_lbl} is cheaper than {100-cell_val:.0f}% of all readings in the past 10 years. This is a historically rare valuation opportunity. The sector has only been this cheap or cheaper {cell_val:.0f}% of the time in the last decade."
+                action_hint = "STRONG VALUE SIGNAL — historically cheap. Worth investigating for a long position."
+                hint_color = "#00cc44"
+            elif cell_val <= 35:
+                interp = f"This sector's {met_lbl} is below its 10-year average. The sector is trading at a discount to its own history. Cheap but not at extreme levels."
+                action_hint = "MODERATE VALUE SIGNAL — below-average valuation. Favourable entry zone."
+                hint_color = "#44ff88"
+            elif cell_val <= 65:
+                interp = f"This sector's {met_lbl} is near its 10-year average. The sector is fairly valued — not cheap, not expensive. No strong valuation signal in either direction."
+                action_hint = "NEUTRAL — fairly valued. Valuation alone does not support a buy or sell call."
+                hint_color = "#888888"
+            elif cell_val <= 80:
+                interp = f"This sector's {met_lbl} is above its 10-year average. The sector is trading at a premium to its own history. Valuations are stretched — investor expectations are high."
+                action_hint = "CAUTION — above-average valuation. New entries carry higher valuation risk."
+                hint_color = "#ffaa00"
+            else:
+                interp = f"This sector's {met_lbl} is in the top {100-cell_val:.0f}% of its 10-year history. The sector has almost never been this expensive. Risk of mean reversion is high."
+                action_hint = "WARNING — near historical peak valuation. Significant downside risk if earnings disappoint."
+                hint_color = "#ff3333"
+
+            raw_disp = f"{raw_val:.1f}{suf}" if raw_val else "N/A"
+
+            st.markdown(f"""
+            <div style='background:#080808;border:1px solid #1a1a1a;border-left:4px solid {zc};
+                        padding:18px 20px;margin-top:8px'>
+              <div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px'>
+                <div>
+                  <div style='font-size:10px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase;
+                               margin-bottom:4px'>{dec_sector.upper()}  ·  {met_lbl}</div>
+                  <div style='font-size:11px;color:#555;letter-spacing:.08em;text-transform:uppercase'>
+                    CURRENT VALUE: <span style='color:#ccc'>{raw_disp}</span>
+                  </div>
+                </div>
+                <div style='text-align:right'>
+                  <div style='font-size:42px;font-weight:700;color:{zc};line-height:1'>{cell_val:.0f}</div>
+                  <div style='font-size:9px;color:#555;text-transform:uppercase;letter-spacing:.1em'>OUT OF 100</div>
+                  <div style='font-size:10px;color:{zc};font-weight:700;letter-spacing:.1em;margin-top:2px'>{zl.upper()}</div>
+                </div>
+              </div>
+              <div style='font-size:12px;color:#cccccc;line-height:1.7;margin-bottom:14px;
+                           border-top:1px solid #1a1a1a;padding-top:12px'>
+                {interp}
+              </div>
+              <div style='background:#0a0600;border:1px solid #2a1800;border-left:3px solid {hint_color};
+                           padding:10px 14px;font-size:11px;color:{hint_color};
+                           font-weight:600;letter-spacing:.06em;text-transform:uppercase'>
+                ◆  {action_hint}
+              </div>
+              <div style='margin-top:10px;font-size:10px;color:#444;letter-spacing:.06em'>
+                PERCENTILE RANK: {cell_val:.0f}/100 &nbsp;·&nbsp;
+                CHEAPER THAN THIS: {cell_val:.0f}% OF THE TIME &nbsp;·&nbsp;
+                MORE EXPENSIVE THAN THIS: {100-cell_val:.0f}% OF THE TIME
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+            <div style='background:#080808;border:1px solid #1a1a1a;padding:16px 20px;
+                         font-size:11px;color:#444;letter-spacing:.06em'>
+              NO DATA AVAILABLE FOR THIS SECTOR / METRIC COMBINATION
+            </div>""", unsafe_allow_html=True)
+
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -598,9 +693,301 @@ with tab4:
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# TAB 5 · METHODOLOGY
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# TAB 5 · ACTION CENTRE
 # ────────────────────────────────────────────────────────────────────────────
 with tab5:
+    st.markdown("<div class='bb-sec'>ACTION CENTRE &nbsp;·&nbsp; SELECT SECTOR + STOCK &nbsp;·&nbsp; GET FULL ANALYSIS + RECOMMENDATION</div>", unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style='background:#0a0600;border:1px solid #2a1800;border-left:3px solid #ff6600;
+                padding:10px 14px;margin-bottom:14px;font-size:10px;color:#888;letter-spacing:.05em'>
+      This module combines data from all 4 components — Sector Heat Map, Sector Ranking,
+      Sector Deep Dive, and CCA Screener — to give you a plain-English recommendation
+      on whether to BUY, HOLD, or AVOID a stock and its sector. Designed for any investor,
+      from first-time traders to experienced fund managers.
+    </div>""", unsafe_allow_html=True)
+
+    ac_c1, ac_c2 = st.columns([1, 1])
+    with ac_c1:
+        ac_sector = st.selectbox("STEP 1 — SELECT SECTOR", list(NSE500.keys()),
+                                  format_func=lambda s: s.upper(), key="ac_sec")
+    with ac_c2:
+        sector_tickers = [(t, d["name"]) for t, d in ALL_TICKERS.items()
+                          if d["sector"] == ac_sector]
+        ac_ticker = st.selectbox(
+            "STEP 2 — SELECT STOCK FROM THIS SECTOR",
+            options=[t for t, _ in sector_tickers],
+            format_func=lambda t: f"{ALL_TICKERS[t]['name']}  [{t.replace('.NS','')}]",
+            key="ac_tick"
+        )
+
+    if ac_sector and ac_ticker:
+        # ── Pull all data ──────────────────────────────────────────────────────
+        sc = composite_score(pct_matrix, ac_sector)
+        sec_zl, sec_zc = interpret_score(sc or 50)
+        mults = sec_df.loc[ac_sector] if ac_sector in sec_df.index else pd.Series()
+        prow  = pct_matrix.loc[ac_sector] if ac_sector in pct_matrix.index else pd.Series()
+
+        # Stock CCA data
+        with st.spinner("LOADING STOCK DATA..."):
+            peers_df = find_peers(ac_ticker, raw_df, n_peers=8)
+
+        from src.analytics import build_comps_table, build_premium_discount, clean_cca
+        peers_clean = clean_cca(peers_df) if not peers_df.empty else pd.DataFrame()
+        comps_tbl   = build_comps_table(peers_clean) if not peers_clean.empty else pd.DataFrame()
+        pd_tbl      = build_premium_discount(comps_tbl) if not comps_tbl.empty else pd.DataFrame()
+
+        trow = pd.Series()
+        if not peers_clean.empty:
+            tr = peers_clean[peers_clean["ticker"] == ac_ticker]
+            if not tr.empty:
+                trow = tr.iloc[0]
+
+        tname  = ALL_TICKERS.get(ac_ticker, {}).get("name", ac_ticker)
+        price  = trow.get("price")
+        mktcap = trow.get("mktcap")
+        rec    = str(trow.get("recommend", "")).upper()
+
+        # ── Section 1: Sector Analysis ─────────────────────────────────────────
+        st.markdown(f"""
+        <div style='background:#080808;border:1px solid #1a1a1a;border-top:2px solid #ff6600;
+                     padding:14px 18px;margin:12px 0 6px'>
+          <div style='font-size:9px;color:#ff6600;letter-spacing:.18em;text-transform:uppercase;margin-bottom:8px'>
+            ◆ PART 1 OF 3 &nbsp;·&nbsp; SECTOR ANALYSIS &nbsp;·&nbsp; {ac_sector.upper()}
+          </div>
+          <div style='display:flex;justify-content:space-between;align-items:center'>
+            <div style='font-size:13px;font-weight:700;color:#fff'>{ac_sector.upper()}</div>
+            <div>
+              <span style='font-size:28px;font-weight:700;color:{sec_zc}'>{sc:.0f}</span>
+              <span style='font-size:10px;color:#444'>/100 &nbsp;</span>
+              <span style='font-size:10px;color:{sec_zc};font-weight:700'>{sec_zl.upper()}</span>
+            </div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        # Sector metric cards
+        sm1, sm2, sm3, sm4 = st.columns(4)
+        for col_ui, (mk, ml) in zip([sm1,sm2,sm3,sm4],
+                                     [("pe","P/E"),("pb","P/BV"),("ev_ebitda","EV/EBITDA"),("div_yield","DIV YLD")]):
+            val  = mults.get(mk)
+            pct  = float(prow.get(mk)) if (prow.get(mk) and not pd.isna(prow.get(mk))) else None
+            _, pc = interpret_score(pct if pct else 50)
+            suf  = "%" if mk == "div_yield" else "x"
+            col_ui.markdown(f"""
+            <div class='bb-card'>
+              <div class='lbl'>{ml}</div>
+              <div class='val' style='color:{pc}'>{f"{float(val):.1f}{suf}" if (val and not pd.isna(val)) else "N/A"}</div>
+              <div class='sub' style='color:{pc}'>{f"{pct:.0f}TH PERCENTILE" if pct else ""}</div>
+            </div>""", unsafe_allow_html=True)
+
+        # Sector interpretation
+        if sc <= 20:
+            sec_interp = f"The {ac_sector} sector is trading near its cheapest levels in 10 years. The composite richness score of {sc:.0f}/100 means the sector has only been cheaper {sc:.0f}% of the time in the past decade. This is a historically attractive entry point for the sector."
+            sec_signal = "SECTOR: STRONGLY FAVOURABLE FOR ENTRY"
+            sec_sig_c = "#00cc44"
+        elif sc <= 35:
+            sec_interp = f"The {ac_sector} sector is below its 10-year average valuation. A score of {sc:.0f}/100 suggests the sector is modestly undervalued relative to its own history. Valuations support building or adding to positions."
+            sec_signal = "SECTOR: FAVOURABLE FOR ENTRY"
+            sec_sig_c = "#44ff88"
+        elif sc <= 65:
+            sec_interp = f"The {ac_sector} sector is trading near its 10-year fair value. A score of {sc:.0f}/100 means valuations are neither cheap nor expensive. The sector does not offer a valuation edge — stock selection becomes more important."
+            sec_signal = "SECTOR: NEUTRAL — STOCK SELECTION CRITICAL"
+            sec_sig_c = "#888888"
+        elif sc <= 80:
+            sec_interp = f"The {ac_sector} sector is above its 10-year average valuation. A score of {sc:.0f}/100 signals that investor expectations are elevated. New entries at these levels carry higher valuation risk if earnings disappoint."
+            sec_signal = "SECTOR: CAUTION — ELEVATED VALUATION"
+            sec_sig_c = "#ffaa00"
+        else:
+            sec_interp = f"The {ac_sector} sector is near its most expensive level in 10 years. A score of {sc:.0f}/100 means the sector has barely ever been this expensive. The risk of a valuation-driven correction is high."
+            sec_signal = "SECTOR: AVOID NEW ENTRY — NEAR HISTORICAL PEAK"
+            sec_sig_c = "#ff3333"
+
+        st.markdown(f"""
+        <div style='background:#080808;border:1px solid #1a1a1a;padding:14px 18px;margin-bottom:4px'>
+          <div style='font-size:11px;color:#ccc;line-height:1.8;margin-bottom:10px'>{sec_interp}</div>
+          <div style='background:#0a0600;border-left:3px solid {sec_sig_c};padding:8px 12px;
+                       font-size:10px;color:{sec_sig_c};font-weight:700;letter-spacing:.08em'>
+            {sec_signal}
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        # ── Section 2: Stock Analysis ──────────────────────────────────────────
+        st.markdown(f"""
+        <div style='background:#080808;border:1px solid #1a1a1a;border-top:2px solid #ff6600;
+                     padding:14px 18px;margin:12px 0 6px'>
+          <div style='font-size:9px;color:#ff6600;letter-spacing:.18em;text-transform:uppercase;margin-bottom:8px'>
+            ◆ PART 2 OF 3 &nbsp;·&nbsp; STOCK ANALYSIS &nbsp;·&nbsp; {tname.upper()}
+          </div>
+          <div style='display:flex;justify-content:space-between;align-items:center'>
+            <div>
+              <div style='font-size:13px;font-weight:700;color:#fff'>{tname.upper()}</div>
+              <div style='font-size:9px;color:#444;letter-spacing:.08em;margin-top:3px'>
+                {ac_ticker.replace(".NS","")} &nbsp;·&nbsp; {ac_sector.upper()} &nbsp;·&nbsp;
+                {ALL_TICKERS.get(ac_ticker,{}).get("cap_tier","").upper()} CAP
+              </div>
+            </div>
+            <div style='text-align:right'>
+              <div style='font-size:20px;font-weight:700;color:#fff'>
+                {"₹"+f"{float(price):,.1f}" if price else "N/A"}
+              </div>
+              <div style='font-size:9px;color:#444'>
+                {"₹"+f"{float(mktcap)/1e7:,.0f} CR" if mktcap else ""}
+              </div>
+            </div>
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        # Stock multiples vs peers
+        if not pd_tbl.empty:
+            st_cols = st.columns(len(pd_tbl))
+            for i, (_, row) in enumerate(pd_tbl.iterrows()):
+                with st_cols[i]:
+                    tv   = row.get("Target")
+                    pm   = row.get("Peer Median")
+                    prem = row.get("Premium/Disc %")
+                    imp  = row.get("Implied Price", "N/A")
+                    color = "#ff3333" if (prem and float(prem)>10) else                             ("#00cc44" if (prem and float(prem)<-10) else "#888")
+                    st.markdown(f"""
+                    <div class='bb-mini'>
+                      <div class='ml'>{row.get("Metric","")}</div>
+                      <div class='mv' style='color:{color}'>{f"{tv:.1f}x" if tv else "N/A"}</div>
+                      <div class='mp'>PEER: {f"{pm:.1f}x" if pm else "N/A"}</div>
+                      <div class='mc' style='color:{color}'>{f"{float(prem):+.1f}%" if prem else "—"}</div>
+                    </div>""", unsafe_allow_html=True)
+
+            # Stock interpretation
+            premiums = [r["Premium/Disc %"] for _, r in pd_tbl.iterrows()
+                       if r.get("Premium/Disc %") is not None]
+            avg_prem = float(np.mean(premiums)) if premiums else 0
+
+            if avg_prem < -20:
+                stk_interp = f"{tname} trades at an average discount of {abs(avg_prem):.1f}% vs its peer group across all valuation metrics. This means you are paying significantly less than what similar companies cost. This is a potentially undervalued stock within the sector."
+                stk_signal = f"STOCK: ATTRACTIVELY PRICED VS PEERS — {abs(avg_prem):.0f}% DISCOUNT"
+                stk_sig_c  = "#00cc44"
+            elif avg_prem < -10:
+                stk_interp = f"{tname} trades at a moderate discount of {abs(avg_prem):.1f}% vs its peer group. The stock appears reasonably priced relative to comparable companies in the sector."
+                stk_signal = f"STOCK: MODESTLY CHEAP VS PEERS — {abs(avg_prem):.0f}% DISCOUNT"
+                stk_sig_c  = "#44ff88"
+            elif avg_prem < 10:
+                stk_interp = f"{tname} trades broadly in line with its peer group (average {avg_prem:+.1f}% vs peers). The stock is fairly valued relative to comparable companies — no strong premium or discount signal."
+                stk_signal = "STOCK: FAIRLY VALUED VS PEERS"
+                stk_sig_c  = "#888888"
+            elif avg_prem < 25:
+                stk_interp = f"{tname} trades at a premium of {avg_prem:.1f}% vs its peer group. Investors are paying more for this stock than for comparable companies. This premium is only justified if the company has stronger growth or returns than peers."
+                stk_signal = f"STOCK: TRADING AT PREMIUM TO PEERS — {avg_prem:.0f}% ABOVE PEER MEDIAN"
+                stk_sig_c  = "#ffaa00"
+            else:
+                stk_interp = f"{tname} trades at a significant premium of {avg_prem:.1f}% vs its peer group. This is a very expensive stock relative to its sector peers. The premium requires exceptional earnings growth to be sustained."
+                stk_signal = f"STOCK: SIGNIFICANTLY OVERPRICED VS PEERS — {avg_prem:.0f}% ABOVE PEER MEDIAN"
+                stk_sig_c  = "#ff3333"
+
+            st.markdown(f"""
+            <div style='background:#080808;border:1px solid #1a1a1a;padding:14px 18px;margin-bottom:4px'>
+              <div style='font-size:11px;color:#ccc;line-height:1.8;margin-bottom:10px'>{stk_interp}</div>
+              <div style='background:#0a0600;border-left:3px solid {stk_sig_c};padding:8px 12px;
+                           font-size:10px;color:{stk_sig_c};font-weight:700;letter-spacing:.08em'>
+                {stk_signal}
+              </div>
+            </div>""", unsafe_allow_html=True)
+        else:
+            avg_prem = 0
+            stk_sig_c = "#888888"
+
+        # ── Section 3: Final Recommendation ───────────────────────────────────
+        st.markdown(f"""
+        <div style='background:#080808;border:1px solid #1a1a1a;border-top:2px solid #ff6600;
+                     padding:14px 18px;margin:12px 0 6px'>
+          <div style='font-size:9px;color:#ff6600;letter-spacing:.18em;text-transform:uppercase'>
+            ◆ PART 3 OF 3 &nbsp;·&nbsp; FINAL RECOMMENDATION
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+        # Combined scoring
+        sector_pts = 0
+        if sc <= 20:   sector_pts = 3
+        elif sc <= 35: sector_pts = 2
+        elif sc <= 65: sector_pts = 1
+        elif sc <= 80: sector_pts = 0
+        else:          sector_pts = -1
+
+        stock_pts = 0
+        if avg_prem < -20:   stock_pts = 3
+        elif avg_prem < -10: stock_pts = 2
+        elif avg_prem < 10:  stock_pts = 1
+        elif avg_prem < 25:  stock_pts = 0
+        else:                stock_pts = -1
+
+        total = sector_pts + stock_pts
+
+        if total >= 5:
+            final_rec = "STRONG BUY"
+            rec_color = "#00cc44"
+            rec_bg    = "#001a00"
+            rec_icon  = "◆◆◆"
+            rec_text  = f"Both the sector and the stock are offering historically attractive valuations. The {ac_sector} sector is near its 10-year cheapest levels (score: {sc:.0f}/100), AND {tname} is trading at a significant discount to its peer group. This is a high-conviction combination that institutional investors look for — a cheap sector with a cheap stock within it. For a long-term investor (2–3 year horizon), this is a compelling entry opportunity."
+        elif total >= 3:
+            final_rec = "BUY"
+            rec_color = "#44ff88"
+            rec_bg    = "#001a00"
+            rec_icon  = "◆◆"
+            rec_text  = f"The overall setup is favourable. Either the sector valuation or the stock's relative pricing (or both) support a positive view. The {ac_sector} sector scores {sc:.0f}/100 on richness, and {tname} is reasonably priced vs peers. Suitable for investors with a 12–18 month horizon. Not a screaming bargain, but a sensible entry with reasonable risk-reward."
+        elif total >= 1:
+            final_rec = "HOLD / ACCUMULATE"
+            rec_color = "#ffaa00"
+            rec_bg    = "#1a0f00"
+            rec_icon  = "◆"
+            rec_text  = f"The setup is mixed. The {ac_sector} sector is neither particularly cheap nor expensive (score: {sc:.0f}/100), and {tname} trades broadly in line with peers. For existing holders — continue holding. For new investors — wait for a better entry point, either a sector pullback or a stock-specific correction. No urgency to buy or sell."
+        elif total >= -1:
+            final_rec = "AVOID / REDUCE"
+            rec_color = "#ffaa00"
+            rec_bg    = "#1a0f00"
+            rec_icon  = "◆"
+            rec_text  = f"The valuation picture is unfavourable. The {ac_sector} sector is expensive relative to its own history (score: {sc:.0f}/100), and/or {tname} trades at a meaningful premium to its peer group. Risk-reward is not compelling at current prices. Existing holders should consider trimming. New investors should wait for a correction before entering."
+        else:
+            final_rec = "STRONG AVOID"
+            rec_color = "#ff3333"
+            rec_bg    = "#1a0000"
+            rec_icon  = "◆◆◆"
+            rec_text  = f"Both signals are negative. The {ac_sector} sector is near historically expensive territory (score: {sc:.0f}/100), AND {tname} trades at a significant premium to peers. This is a high-risk entry at current levels. Valuation-driven mean reversion is a real risk. Avoid new positions. Existing holders should consider reducing exposure and waiting for valuations to normalise."
+
+        st.markdown(f"""
+        <div style='background:{rec_bg};border:2px solid {rec_color};padding:24px 24px;margin-top:8px'>
+          <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'>
+            <div>
+              <div style='font-size:9px;color:{rec_color};letter-spacing:.2em;text-transform:uppercase;margin-bottom:6px'>
+                TERMINAL RECOMMENDATION
+              </div>
+              <div style='font-size:28px;font-weight:700;color:{rec_color};letter-spacing:.06em'>
+                {rec_icon} &nbsp; {final_rec}
+              </div>
+            </div>
+            <div style='text-align:right;font-size:10px;color:#555;letter-spacing:.08em;line-height:2'>
+              <div>SECTOR SCORE: <span style='color:{sec_zc}'>{sc:.0f}/100 ({sec_zl.upper()})</span></div>
+              <div>STOCK VS PEERS: <span style='color:{stk_sig_c}'>{avg_prem:+.1f}% AVG PREMIUM/DISC</span></div>
+              <div>ANALYST CONSENSUS: <span style='color:#ccc'>{rec or "N/A"}</span></div>
+            </div>
+          </div>
+          <div style='font-size:12px;color:#cccccc;line-height:1.9;border-top:1px solid {rec_color}33;
+                       padding-top:14px'>
+            {rec_text}
+          </div>
+          <div style='margin-top:16px;padding:10px 14px;background:rgba(0,0,0,0.4);
+                       font-size:9px;color:#555;letter-spacing:.06em;line-height:1.8'>
+            ⚠ DISCLAIMER: This recommendation is based purely on quantitative valuation signals —
+            historical percentile ranking and peer comparison. It does NOT account for:
+            earnings quality, management strength, macro outlook, interest rate cycle,
+            geopolitical risk, or company-specific news. Always conduct your own research
+            before making investment decisions. Past valuation patterns do not guarantee future returns.
+          </div>
+        </div>""", unsafe_allow_html=True)
+
+
+# TAB 6 · METHODOLOGY
+# ────────────────────────────────────────────────────────────────────────────
+with tab6:
     st.markdown("<div class='bb-sec'>METHODOLOGY &nbsp;·&nbsp; DATA ARCHITECTURE &nbsp;·&nbsp; REAL-TIME DESIGN</div>", unsafe_allow_html=True)
     st.markdown("""
 **DATA REFRESH POLICY**
