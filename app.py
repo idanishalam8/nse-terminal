@@ -98,6 +98,26 @@ hr{border:none;border-top:1px solid #1a1a1a}
 p,li{color:#888 !important;font-size:12px !important}
 code{background:#0a0a0a !important;color:#ff6600 !important;border:1px solid #222 !important}
 
+/* ── Fix broken Material Icons text (keyboard_double_arrow / arrow_right) ── */
+/* Hide Streamlit header, footer, toolbar that show broken icon text */
+#MainMenu {visibility:hidden !important}
+footer {visibility:hidden !important}
+header[data-testid="stHeader"] {background:transparent !important; visibility:visible !important}
+[data-testid="stToolbar"] {visibility:hidden !important}
+[data-testid="manage-app-button"] {visibility:hidden !important}
+.stDeployButton {display:none !important}
+[data-testid="stStatusWidget"] {visibility:hidden !important}
+
+/* Fix sidebar collapse/expand button — hide raw icon text, show SVG only */
+button[kind="headerNoPadding"] {font-size:0 !important; color:transparent !important}
+button[kind="headerNoPadding"] svg {color:#ff6600 !important; width:20px !important; height:20px !important}
+[data-testid="stSidebarCollapsedControl"] button {font-size:0 !important; color:transparent !important}
+[data-testid="stSidebarCollapsedControl"] button svg {color:#ff6600 !important}
+[data-testid="stSidebarNavCollapseIcon"],
+[data-testid="stSidebarNavExpandIcon"] {color:#ff6600 !important}
+/* Override Material Symbols font reset — keep it for icons only */
+.material-symbols-rounded, .material-icons {font-family:'Material Symbols Rounded','Material Icons' !important}
+
 /* Custom components */
 .bb-topbar{background:#ff6600;color:#000;padding:5px 16px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
 .bb-strip{background:#0a0a0a;border-top:1px solid #ff6600;border-bottom:1px solid #ff6600;padding:5px 0;font-size:10px;font-weight:600;letter-spacing:.05em;overflow:hidden;white-space:nowrap}
@@ -114,12 +134,72 @@ code{background:#0a0a0a !important;color:#ff6600 !important;border:1px solid #22
 .bb-mini .mc{font-size:9px;font-weight:700;margin-top:2px}
 .bb-info{background:#0a0600;border:1px solid #2a1800;border-left:3px solid #ff6600;padding:8px 12px;font-size:10px;color:#555;letter-spacing:.05em;margin-bottom:10px}
 .status-live{display:inline-block;width:7px;height:7px;background:#00cc44;border-radius:50%;margin-right:5px}
+
+/* ── Market Ticker Ribbon ── */
+@keyframes ticker-scroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+.market-ribbon {
+  background: #050505;
+  border-bottom: 1px solid #1a1a1a;
+  overflow: hidden;
+  white-space: nowrap;
+  padding: 6px 0;
+  position: relative;
+}
+.market-ribbon::before,
+.market-ribbon::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40px;
+  z-index: 2;
+  pointer-events: none;
+}
+.market-ribbon::before {
+  left: 0;
+  background: linear-gradient(90deg, #050505 0%, transparent 100%);
+}
+.market-ribbon::after {
+  right: 0;
+  background: linear-gradient(270deg, #050505 0%, transparent 100%);
+}
+.ribbon-track {
+  display: inline-block;
+  animation: ticker-scroll 20s linear infinite;
+}
+.ribbon-track:hover {
+  animation-play-state: paused;
+}
+.ribbon-item {
+  display: inline-block;
+  margin: 0 28px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.ribbon-item .idx-name {
+  color: #ff6600;
+  margin-right: 8px;
+}
+.ribbon-item .idx-price {
+  color: #cccccc;
+  margin-right: 6px;
+}
+.ribbon-item .idx-chg {
+  font-size: 10px;
+  font-weight: 700;
+}
 </style>
 """, unsafe_allow_html=True)
 
 from src.config import NSE500, ALL_TICKERS, CCA_METRICS, LOOKBACK_OPTIONS, NUMERIC_COLS, ZONE_COLORS
 from src.data import (fetch_all_live, fetch_all_history, fetch_price_history,
-                      aggregate_to_sector, find_peers, clean_company_data)
+                      aggregate_to_sector, find_peers, clean_company_data,
+                      fetch_index_data)
 from src.analytics import (build_percentile_matrix, build_richness_series,
                             composite_score, interpret_score, build_comps_table,
                             build_premium_discount, football_field, peer_stats,
@@ -151,6 +231,12 @@ def load_history(years: int):
 @st.cache_data(ttl=900, show_spinner=False)
 def load_price(ticker: str):
     return fetch_price_history(ticker, "1y")
+
+
+@st.cache_data(ttl=300, show_spinner=False)   # 5-minute refresh for indices
+def load_index_data():
+    """Fetch live Nifty 50, Nifty Bank, Nifty IT prices."""
+    return fetch_index_data()
 
 
 # ── SIDEBAR ───────────────────────────────────────────────────────────────────
@@ -230,16 +316,44 @@ st.markdown(f"""
   <span><span class='status-live'></span>LIVE &nbsp;·&nbsp; {now_str} &nbsp;·&nbsp; 12 SECTORS</span>
 </div>""", unsafe_allow_html=True)
 
+# ── REAL-TIME MARKET RIBBON ───────────────────────────────────────────────────
+idx_data = load_index_data()
+ribbon_items = ""
+for name, vals in idx_data.items():
+    chg_color = "#00cc44" if vals["change"] >= 0 else "#ff3333"
+    chg_arrow = "▲" if vals["change"] >= 0 else "▼"
+    ribbon_items += f"""
+    <span class='ribbon-item'>
+      <span class='idx-name'>{name}</span>
+      <span class='idx-price'>₹{vals["price"]:,.2f}</span>
+      <span class='idx-chg' style='color:{chg_color}'>{chg_arrow} {vals["change"]:+.2f} ({vals["change_pct"]:+.2f}%)</span>
+    </span>"""
+
+# Duplicate content for seamless infinite scroll
+st.markdown(f"""
+<div class='market-ribbon'>
+  <div class='ribbon-track'>
+    {ribbon_items}
+    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
+    {ribbon_items}
+    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
+    {ribbon_items}
+    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
+    {ribbon_items}
+    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
+  </div>
+</div>""", unsafe_allow_html=True)
+
 # Live sector strip
+short_map = {
+    "Information Technology":"IT","Banking":"BANK","FMCG":"FMCG",
+    "Automobiles":"AUTO","Pharmaceuticals":"PHARMA","Metals & Mining":"METALS",
+    "Energy & Oil Gas":"ENERGY","Financial Services":"FIN SVCS",
+    "Consumer Durables":"CONS DUR","Healthcare":"HEALTH",
+    "Real Estate":"REALTY","Capital Goods & Infra":"INFRA",
+}
 if len(richness) > 0:
     items = []
-    short_map = {
-        "Information Technology":"IT","Banking":"BANK","FMCG":"FMCG",
-        "Automobiles":"AUTO","Pharmaceuticals":"PHARMA","Metals & Mining":"METALS",
-        "Energy & Oil Gas":"ENERGY","Financial Services":"FIN SVCS",
-        "Consumer Durables":"CONS DUR","Healthcare":"HEALTH",
-        "Real Estate":"REALTY","Capital Goods & Infra":"INFRA",
-    }
     for s in richness.index:
         sc = richness[s]
         c  = "#00cc44" if sc < 35 else ("#ff3333" if sc > 65 else "#ffaa00")
@@ -905,53 +1019,171 @@ with tab5:
           </div>
         </div>""", unsafe_allow_html=True)
 
-        # Combined scoring
-        sector_pts = 0
-        if sc <= 20:   sector_pts = 3
-        elif sc <= 35: sector_pts = 2
-        elif sc <= 65: sector_pts = 1
-        elif sc <= 80: sector_pts = 0
-        else:          sector_pts = -1
+        # ═══════════════════════════════════════════════════════════════════════
+        # STOCK-PERFORMANCE-FOCUSED SCORING (75% stock / 25% sector)
+        # ═══════════════════════════════════════════════════════════════════════
 
-        stock_pts = 0
-        if avg_prem < -20:   stock_pts = 3
-        elif avg_prem < -10: stock_pts = 2
-        elif avg_prem < 10:  stock_pts = 1
-        elif avg_prem < 25:  stock_pts = 0
-        else:                stock_pts = -1
+        # ── Signal 1: Sector Valuation (weight: 25%, max 2.5 pts) ──────────
+        sector_pts = 0.0
+        if sc <= 20:   sector_pts = 2.5
+        elif sc <= 35: sector_pts = 2.0
+        elif sc <= 50: sector_pts = 1.5
+        elif sc <= 65: sector_pts = 1.0
+        elif sc <= 80: sector_pts = 0.5
+        else:          sector_pts = 0.0
 
-        total = sector_pts + stock_pts
+        # ── Signal 2: CCA Premium/Discount vs Peers (weight: 25%, max 2.5 pts) ──
+        cca_pts = 0.0
+        if avg_prem < -20:   cca_pts = 2.5
+        elif avg_prem < -10: cca_pts = 2.0
+        elif avg_prem < 0:   cca_pts = 1.5
+        elif avg_prem < 10:  cca_pts = 1.0
+        elif avg_prem < 25:  cca_pts = 0.5
+        else:                cca_pts = 0.0
 
-        if total >= 5:
+        # ── Signal 3: 52-Week Range Position (weight: 20%, max 2 pts) ──────
+        h52 = trow.get("52w_high")
+        l52 = trow.get("52w_low")
+        range_pts = 0.0
+        range_pct = None
+        if price and h52 and l52:
+            try:
+                p, h, l = float(price), float(h52), float(l52)
+                if h > l and h > 0:
+                    range_pct = ((p - l) / (h - l)) * 100  # 0=at 52w low, 100=at 52w high
+                    drawdown = ((h - p) / h) * 100  # % below 52w high
+                    if drawdown >= 30:   range_pts = 2.0   # Deep correction — attractive
+                    elif drawdown >= 20: range_pts = 1.6
+                    elif drawdown >= 10: range_pts = 1.2
+                    elif drawdown >= 5:  range_pts = 0.8
+                    else:                range_pts = 0.4   # Near highs — less attractive entry
+            except (ValueError, TypeError):
+                pass
+
+        # ── Signal 4: Analyst Consensus (weight: 15%, max 1.5 pts) ──────────
+        analyst_pts = 0.0
+        rec_upper = rec.upper() if rec else ""
+        if "STRONG" in rec_upper and "BUY" in rec_upper:   analyst_pts = 1.5
+        elif "BUY" in rec_upper:                           analyst_pts = 1.2
+        elif "OUTPERFORM" in rec_upper:                    analyst_pts = 1.0
+        elif "HOLD" in rec_upper or "NEUTRAL" in rec_upper: analyst_pts = 0.7
+        elif "UNDERPERFORM" in rec_upper:                  analyst_pts = 0.3
+        elif "SELL" in rec_upper:                          analyst_pts = 0.0
+        else:                                              analyst_pts = 0.7  # No data = neutral
+
+        # ── Signal 5: Fundamentals — ROE & Margins (weight: 15%, max 1.5 pts) ──
+        fund_pts = 0.0
+        roe_val = trow.get("roe")
+        opm_val = trow.get("operating_margin")
+        npm_val = trow.get("net_margin")
+        fund_signals = 0
+        fund_count = 0
+
+        if roe_val and not (isinstance(roe_val, float) and np.isnan(roe_val)):
+            fund_count += 1
+            rv = float(roe_val)
+            if rv > 0.20: fund_signals += 2
+            elif rv > 0.12: fund_signals += 1
+            else: fund_signals += 0
+
+        if opm_val and not (isinstance(opm_val, float) and np.isnan(opm_val)):
+            fund_count += 1
+            ov = float(opm_val)
+            if ov > 0.20: fund_signals += 2
+            elif ov > 0.10: fund_signals += 1
+            else: fund_signals += 0
+
+        if npm_val and not (isinstance(npm_val, float) and np.isnan(npm_val)):
+            fund_count += 1
+            nv = float(npm_val)
+            if nv > 0.15: fund_signals += 2
+            elif nv > 0.08: fund_signals += 1
+            else: fund_signals += 0
+
+        if fund_count > 0:
+            fund_ratio = fund_signals / (fund_count * 2)  # 0 to 1
+            fund_pts = round(fund_ratio * 1.5, 2)
+        else:
+            fund_pts = 0.75  # No data = neutral
+
+        # ── TOTAL SCORE (0 to 10) ──────────────────────────────────────────
+        total_score = sector_pts + cca_pts + range_pts + analyst_pts + fund_pts
+        max_score = 10.0
+
+        # ── Signal breakdowns for display ──────────────────────────────────
+        drawdown_str = ""
+        if price and h52:
+            try:
+                dd = ((float(h52) - float(price)) / float(h52)) * 100
+                drawdown_str = f"{dd:.1f}% BELOW 52W HIGH"
+            except: drawdown_str = "N/A"
+
+        roe_str = f"{float(roe_val)*100:.1f}%" if (roe_val and not (isinstance(roe_val, float) and np.isnan(roe_val))) else "N/A"
+        opm_str = f"{float(opm_val)*100:.1f}%" if (opm_val and not (isinstance(opm_val, float) and np.isnan(opm_val))) else "N/A"
+
+        # ── Generate Recommendation ────────────────────────────────────────
+        if total_score >= 8.0:
             final_rec = "STRONG BUY"
             rec_color = "#00cc44"
             rec_bg    = "#001a00"
             rec_icon  = "◆◆◆"
-            rec_text  = f"Both the sector and the stock are offering historically attractive valuations. The {ac_sector} sector is near its 10-year cheapest levels (score: {sc:.0f}/100), AND {tname} is trading at a significant discount to its peer group. This is a high-conviction combination that institutional investors look for — a cheap sector with a cheap stock within it. For a long-term investor (2–3 year horizon), this is a compelling entry opportunity."
-        elif total >= 3:
+            rec_text  = f"{tname} scores exceptionally well across all performance indicators. The stock is {drawdown_str}, trading at a {abs(avg_prem):.1f}% discount to peers, and backed by strong fundamentals (ROE: {roe_str}). Analyst consensus is {rec or 'N/A'}. Combined with a supportive sector environment (richness: {sc:.0f}/100), this is a high-conviction opportunity for long-term investors (2–3 year horizon)."
+        elif total_score >= 6.5:
             final_rec = "BUY"
             rec_color = "#44ff88"
             rec_bg    = "#001a00"
             rec_icon  = "◆◆"
-            rec_text  = f"The overall setup is favourable. Either the sector valuation or the stock's relative pricing (or both) support a positive view. The {ac_sector} sector scores {sc:.0f}/100 on richness, and {tname} is reasonably priced vs peers. Suitable for investors with a 12–18 month horizon. Not a screaming bargain, but a sensible entry with reasonable risk-reward."
-        elif total >= 1:
-            final_rec = "HOLD / ACCUMULATE"
+            rec_text  = f"{tname} shows a favourable risk-reward profile. The stock is {drawdown_str} and {'trading at a discount to peers' if avg_prem < 0 else 'reasonably valued vs peers'}. Key fundamentals — ROE: {roe_str}, Operating Margin: {opm_str} — support the valuation. Analyst consensus: {rec or 'N/A'}. Suitable for building a position over a 12–18 month horizon."
+        elif total_score >= 5.0:
+            final_rec = "ACCUMULATE"
+            rec_color = "#88cc44"
+            rec_bg    = "#0a1a00"
+            rec_icon  = "◆◆"
+            rec_text  = f"{tname} has a mildly positive setup. The stock is {drawdown_str} with {'a modest discount' if avg_prem < 0 else 'fair pricing'} relative to peers ({avg_prem:+.1f}%). Fundamentals are {'solid' if fund_pts > 0.9 else 'adequate'} (ROE: {roe_str}). Consider accumulating on dips rather than a lump-sum entry. Sector backdrop: {sec_zl.lower()} (score: {sc:.0f}/100)."
+        elif total_score >= 3.5:
+            final_rec = "HOLD / WAIT"
             rec_color = "#ffaa00"
             rec_bg    = "#1a0f00"
             rec_icon  = "◆"
-            rec_text  = f"The setup is mixed. The {ac_sector} sector is neither particularly cheap nor expensive (score: {sc:.0f}/100), and {tname} trades broadly in line with peers. For existing holders — continue holding. For new investors — wait for a better entry point, either a sector pullback or a stock-specific correction. No urgency to buy or sell."
-        elif total >= -1:
-            final_rec = "AVOID / REDUCE"
-            rec_color = "#ffaa00"
-            rec_bg    = "#1a0f00"
+            rec_text  = f"{tname} presents a mixed picture. The stock is {drawdown_str} and trades at {avg_prem:+.1f}% vs peer median. {'Analyst consensus leans positive' if 'BUY' in rec_upper else 'Analyst consensus is neutral/mixed'}. For existing holders — continue holding. For new investors — wait for a 10–15% correction for a better entry point. No urgency to act."
+        elif total_score >= 2.0:
+            final_rec = "REDUCE / AVOID"
+            rec_color = "#ff6644"
+            rec_bg    = "#1a0800"
             rec_icon  = "◆"
-            rec_text  = f"The valuation picture is unfavourable. The {ac_sector} sector is expensive relative to its own history (score: {sc:.0f}/100), and/or {tname} trades at a meaningful premium to its peer group. Risk-reward is not compelling at current prices. Existing holders should consider trimming. New investors should wait for a correction before entering."
+            rec_text  = f"{tname} has an unfavourable risk-reward at current levels. The stock trades at a {avg_prem:+.1f}% premium to peers, is {drawdown_str}, and {'fundamentals do not justify the premium' if fund_pts < 0.9 else 'while fundamentals are decent, they are priced in'}. {'The sector is also expensive' if sc > 65 else 'Sector support is limited'}. Existing holders should consider trimming. Avoid fresh entries until the stock corrects."
         else:
             final_rec = "STRONG AVOID"
             rec_color = "#ff3333"
             rec_bg    = "#1a0000"
             rec_icon  = "◆◆◆"
-            rec_text  = f"Both signals are negative. The {ac_sector} sector is near historically expensive territory (score: {sc:.0f}/100), AND {tname} trades at a significant premium to peers. This is a high-risk entry at current levels. Valuation-driven mean reversion is a real risk. Avoid new positions. Existing holders should consider reducing exposure and waiting for valuations to normalise."
+            rec_text  = f"{tname} is flashing red across multiple indicators. The stock is expensive vs peers ({avg_prem:+.1f}% premium), {'near its 52-week high with limited upside' if (range_pct and range_pct > 85) else f'{drawdown_str}'}, and {'the sector is overheated' if sc > 65 else 'sector support is absent'} (richness: {sc:.0f}/100). {'Analyst consensus is bearish' if 'SELL' in rec_upper else 'Risk-reward is heavily skewed to the downside'}. Avoid new positions. Existing holders should consider booking profits."
+
+        # ── Signal breakdown cards ─────────────────────────────────────────
+        st.markdown(f"""
+        <div style='background:#050505;border:1px solid #1a1a1a;padding:10px 16px;margin:8px 0;
+                     display:flex;gap:12px;flex-wrap:wrap'>
+          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
+            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>SECTOR</div>
+            <div style='font-size:14px;font-weight:700;color:{sec_zc}'>{sector_pts:.1f}<span style='font-size:9px;color:#333'>/2.5</span></div>
+          </div>
+          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
+            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>VS PEERS</div>
+            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if cca_pts >= 1.5 else ("#ff3333" if cca_pts < 0.8 else "#ffaa00")}'>{cca_pts:.1f}<span style='font-size:9px;color:#333'>/2.5</span></div>
+          </div>
+          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
+            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>52W RANGE</div>
+            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if range_pts >= 1.2 else ("#ff3333" if range_pts < 0.6 else "#ffaa00")}'>{range_pts:.1f}<span style='font-size:9px;color:#333'>/2.0</span></div>
+          </div>
+          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
+            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>ANALYSTS</div>
+            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if analyst_pts >= 1.0 else ("#ff3333" if analyst_pts < 0.5 else "#ffaa00")}'>{analyst_pts:.1f}<span style='font-size:9px;color:#333'>/1.5</span></div>
+          </div>
+          <div style='flex:1;min-width:80px;text-align:center;padding:6px'>
+            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>FUNDAMENT.</div>
+            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if fund_pts >= 0.9 else ("#ff3333" if fund_pts < 0.5 else "#ffaa00")}'>{fund_pts:.1f}<span style='font-size:9px;color:#333'>/1.5</span></div>
+          </div>
+        </div>""", unsafe_allow_html=True)
 
         st.markdown(f"""
         <div style='background:{rec_bg};border:2px solid {rec_color};padding:24px 24px;margin-top:8px'>
@@ -965,9 +1197,11 @@ with tab5:
               </div>
             </div>
             <div style='text-align:right;font-size:10px;color:#555;letter-spacing:.08em;line-height:2'>
-              <div>SECTOR SCORE: <span style='color:{sec_zc}'>{sc:.0f}/100 ({sec_zl.upper()})</span></div>
-              <div>STOCK VS PEERS: <span style='color:{stk_sig_c}'>{avg_prem:+.1f}% AVG PREMIUM/DISC</span></div>
-              <div>ANALYST CONSENSUS: <span style='color:#ccc'>{rec or "N/A"}</span></div>
+              <div>COMPOSITE SCORE: <span style='color:{rec_color}'>{total_score:.1f}/{max_score:.0f}</span></div>
+              <div>STOCK VS PEERS: <span style='color:{stk_sig_c}'>{avg_prem:+.1f}% AVG</span></div>
+              <div>52W POSITION: <span style='color:#ccc'>{drawdown_str or "N/A"}</span></div>
+              <div>ANALYST: <span style='color:#ccc'>{rec or "N/A"}</span> &nbsp;·&nbsp; ROE: <span style='color:#ccc'>{roe_str}</span></div>
+              <div>SECTOR: <span style='color:{sec_zc}'>{sc:.0f}/100 ({sec_zl.upper()})</span></div>
             </div>
           </div>
           <div style='font-size:12px;color:#cccccc;line-height:1.9;border-top:1px solid {rec_color}33;
@@ -976,11 +1210,11 @@ with tab5:
           </div>
           <div style='margin-top:16px;padding:10px 14px;background:rgba(0,0,0,0.4);
                        font-size:9px;color:#555;letter-spacing:.06em;line-height:1.8'>
-            ⚠ DISCLAIMER: This recommendation is based purely on quantitative valuation signals —
-            historical percentile ranking and peer comparison. It does NOT account for:
-            earnings quality, management strength, macro outlook, interest rate cycle,
-            geopolitical risk, or company-specific news. Always conduct your own research
-            before making investment decisions. Past valuation patterns do not guarantee future returns.
+            ⚠ DISCLAIMER: This recommendation is based on quantitative signals —
+            peer comparison, 52-week price action, analyst consensus, and fundamental metrics.
+            It does NOT account for: earnings quality, management changes, macro outlook,
+            interest rate cycle, regulatory risk, or company-specific news.
+            Always conduct your own research before making investment decisions.
           </div>
         </div>""", unsafe_allow_html=True)
 
