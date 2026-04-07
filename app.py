@@ -71,9 +71,22 @@ tr:first-child td{color:#ff9944 !important;font-weight:600 !important;background
   display:none !important}
 [data-testid="stExpander"] details summary span[data-testid="stExpanderToggleIcon"]{
   display:none !important}
-/* Hide the broken icon span entirely */
+/* Hide the broken icon span entirely — aggressive selectors */
 [data-testid="stExpander"] summary > div > span:first-child{display:none !important}
 [data-testid="stExpander"] summary .eyeumkm0{display:none !important}
+/* Hide ALL material icon text inside expanders */
+[data-testid="stExpander"] summary span[data-testid="stIconMaterial"],
+[data-testid="stExpander"] summary .material-symbols-rounded,
+[data-testid="stExpander"] summary .e1nzilvr5,
+[data-testid="stExpander"] summary > div > div:first-child > span:first-child{
+  display:none !important; font-size:0 !important; width:0 !important;
+  height:0 !important; overflow:hidden !important; position:absolute !important}
+/* Nuclear option: hide any span that renders icon text in expander */
+[data-testid="stExpander"] details summary > div{
+  overflow:hidden !important}
+[data-testid="stExpander"] details summary > div > div:first-child{
+  font-size:0 !important; line-height:0 !important; overflow:hidden !important;
+  max-height:0 !important; padding:0 !important; margin:0 !important}
 /* Custom arrow via label */
 [data-testid="stExpander"] details summary::before{
   content:"▶  ";color:#ff6600;font-size:9px;font-family:'Courier New',monospace;
@@ -117,6 +130,14 @@ button[kind="headerNoPadding"] svg {color:#ff6600 !important; width:20px !import
 [data-testid="stSidebarNavExpandIcon"] {color:#ff6600 !important}
 /* Override Material Symbols font reset — keep it for icons only */
 .material-symbols-rounded, .material-icons {font-family:'Material Symbols Rounded','Material Icons' !important}
+/* Bottom manage app button — hide completely */
+[data-testid="manage-app-button"] span,
+.viewerBadge_container__r5tak,
+[data-testid="stBottom"] [data-testid="manage-app-button"],
+[data-testid="stBottomBlockContainer"] {visibility:hidden !important; height:0 !important; min-height:0 !important; padding:0 !important}
+/* Hide ALL elements with arrow_right text (material icon fallback) */
+span:not([class]):empty + span,
+[data-testid="stExpander"] summary span[style*="font-family"] {display:none !important}
 
 /* Custom components */
 .bb-topbar{background:#ff6600;color:#000;padding:5px 16px;font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
@@ -318,31 +339,31 @@ st.markdown(f"""
 
 # ── REAL-TIME MARKET RIBBON ───────────────────────────────────────────────────
 idx_data = load_index_data()
-ribbon_items = ""
-for name, vals in idx_data.items():
-    chg_color = "#00cc44" if vals["change"] >= 0 else "#ff3333"
-    chg_arrow = "▲" if vals["change"] >= 0 else "▼"
-    ribbon_items += f"""
-    <span class='ribbon-item'>
-      <span class='idx-name'>{name}</span>
-      <span class='idx-price'>₹{vals["price"]:,.2f}</span>
-      <span class='idx-chg' style='color:{chg_color}'>{chg_arrow} {vals["change"]:+.2f} ({vals["change_pct"]:+.2f}%)</span>
-    </span>"""
+ribbon_parts = []
+for idx_name, idx_vals in idx_data.items():
+    idx_price = idx_vals.get('price', 0)
+    idx_chg = idx_vals.get('change', 0)
+    idx_chg_pct = idx_vals.get('change_pct', 0)
+    chg_color = '#00cc44' if idx_chg >= 0 else '#ff3333'
+    chg_arrow = '▲' if idx_chg >= 0 else '▼'
+    ribbon_parts.append(
+        '<span class="ribbon-item">'
+        '<span class="idx-name">' + str(idx_name) + '</span>'
+        '<span class="idx-price">₹' + f'{idx_price:,.2f}' + '</span>'
+        '<span class="idx-chg" style="color:' + chg_color + '">'
+        + chg_arrow + ' ' + f'{idx_chg:+.2f}' + ' (' + f'{idx_chg_pct:+.2f}' + '%)</span>'
+        '</span>'
+    )
+ribbon_block = '<span class="ribbon-item" style="color:#333;margin:0 20px">◆</span>'.join(ribbon_parts)
+sep = '<span class="ribbon-item" style="color:#333;margin:0 20px">◆</span>'
+full_ribbon = (ribbon_block + sep) * 4
 
-# Duplicate content for seamless infinite scroll
-st.markdown(f"""
-<div class='market-ribbon'>
-  <div class='ribbon-track'>
-    {ribbon_items}
-    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
-    {ribbon_items}
-    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
-    {ribbon_items}
-    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
-    {ribbon_items}
-    <span class='ribbon-item' style='color:#333;margin:0 20px'>◆</span>
-  </div>
-</div>""", unsafe_allow_html=True)
+st.markdown(
+    '<div class="market-ribbon"><div class="ribbon-track">'
+    + full_ribbon +
+    '</div></div>',
+    unsafe_allow_html=True
+)
 
 # Live sector strip
 short_map = {
