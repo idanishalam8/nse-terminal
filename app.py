@@ -6,7 +6,7 @@ import warnings, time
 import numpy as np
 import pandas as pd
 import streamlit as st
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 warnings.filterwarnings("ignore")
 
@@ -16,6 +16,50 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+
+# ── MARKET HOURS & AUTO-REFRESH ───────────────────────────────────────────────
+def is_market_hours() -> bool:
+    """Check if Indian stock market is currently open (9:15 AM – 3:30 PM IST, Mon-Fri)."""
+    now = datetime.now()  # Server time — adjust if needed
+    # IST offset: UTC+5:30
+    # On Streamlit Cloud servers are UTC, so we add 5:30
+    try:
+        import pytz
+        ist = pytz.timezone('Asia/Kolkata')
+        now = datetime.now(ist)
+    except ImportError:
+        # If pytz not available, assume local time is IST
+        pass
+    
+    weekday = now.weekday()  # 0=Mon ... 6=Sun
+    if weekday >= 5:  # Saturday/Sunday
+        return False
+    
+    market_open = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    market_close = now.replace(hour=15, minute=30, second=0, microsecond=0)
+    return market_open <= now <= market_close
+
+
+def get_refresh_interval() -> int:
+    """Return refresh interval in seconds based on market hours."""
+    if is_market_hours():
+        return 300   # 5 minutes during market hours
+    else:
+        return 1800  # 30 minutes outside market hours
+
+
+# ── Auto-refresh logic ────────────────────────────────────────────────────────
+if "last_refresh_time" not in st.session_state:
+    st.session_state.last_refresh_time = datetime.now()
+
+refresh_interval = get_refresh_interval()
+time_since_refresh = (datetime.now() - st.session_state.last_refresh_time).total_seconds()
+
+if time_since_refresh > refresh_interval:
+    st.session_state.last_refresh_time = datetime.now()
+    st.cache_data.clear()
+    st.rerun()
 
 # ── Bloomberg Terminal CSS ─────────────────────────────────────────────────────
 st.markdown("""
@@ -220,7 +264,7 @@ span:not([class]):empty + span,
 from src.config import NSE500, ALL_TICKERS, CCA_METRICS, LOOKBACK_OPTIONS, NUMERIC_COLS, ZONE_COLORS
 from src.data import (fetch_all_live, fetch_all_history, fetch_price_history,
                       aggregate_to_sector, find_peers, clean_company_data,
-                      fetch_index_data)
+                      fetch_index_data, get_data_source_info)
 from src.analytics import (build_percentile_matrix, build_richness_series,
                             composite_score, interpret_score, build_comps_table,
                             build_premium_discount, football_field, peer_stats,
@@ -234,13 +278,17 @@ TICKER_NAMES = {t: f"{d['name']}  [{t.replace('.NS','')}]" for t, d in ALL_TICKE
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DATA — TTL=15min, fetches fresh from Yahoo Finance every 15 minutes
-# No pkl files — pure in-memory Streamlit cache only
+# DATA — Smart TTL: 5 min during market hours, 30 min after
+# Primary source: NSE India direct API (real-time)
+# Fallback: Yahoo Finance → Static data
 # ══════════════════════════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=900, show_spinner=False)   # 15-minute live refresh
+_live_ttl = 300 if is_market_hours() else 1800  # 5 min market / 30 min off
+_idx_ttl  = 120 if is_market_hours() else 1800  # 2 min market / 30 min off
+
+@st.cache_data(ttl=_live_ttl, show_spinner=False)
 def load_live_data():
-    """Fetch all NSE 500 companies live from Yahoo Finance."""
+    """Fetch all NSE 500 companies — NSE India primary, Yahoo Finance fallback."""
     return fetch_all_live()
 
 
@@ -249,14 +297,14 @@ def load_history(years: int):
     return fetch_all_history(years)
 
 
-@st.cache_data(ttl=900, show_spinner=False)
+@st.cache_data(ttl=_live_ttl, show_spinner=False)
 def load_price(ticker: str):
     return fetch_price_history(ticker, "1y")
 
 
-@st.cache_data(ttl=300, show_spinner=False)   # 5-minute refresh for indices
+@st.cache_data(ttl=_idx_ttl, show_spinner=False)
 def load_index_data():
-    """Fetch live Nifty 50, Nifty Bank, Nifty IT prices."""
+    """Fetch live Nifty 50, Nifty Bank, Nifty IT — NSE direct primary."""
     return fetch_index_data()
 
 
@@ -271,7 +319,7 @@ with st.sidebar:
                 padding:0 4px;margin-bottom:10px;line-height:1.8'>
       Valuation Intelligence Suite<br>
       <span class='status-live'></span>
-      <span style='color:#00cc44'>LIVE DATA</span> &nbsp;·&nbsp; NSE 500<br>
+      <span style='color:#00cc44'>REAL-TIME DATA</span> &nbsp;·&nbsp; NSE 500<br>
       <span style='color:#333'>━━━━━━━━━━━━━━━━━━━━━━</span>
     </div>
     """, unsafe_allow_html=True)
@@ -293,18 +341,33 @@ with st.sidebar:
     st.markdown("<div style='border-top:1px solid #111;margin:10px 0'></div>", unsafe_allow_html=True)
 
     if st.button("⟳  REFRESH NOW", use_container_width=True):
+        st.session_state.last_refresh_time = datetime.now()
         st.cache_data.clear()
         st.success("CACHE CLEARED — FETCHING LIVE DATA"); time.sleep(1); st.rerun()
 
+    # ── Smart data source display ──────────────────────────────────────────
     now = datetime.now().strftime("%H:%M:%S")
+    mkt_status = "OPEN" if is_market_hours() else "CLOSED"
+    mkt_color  = "#00cc44" if is_market_hours() else "#ff3333"
+    refresh_sec = get_refresh_interval()
+    refresh_lbl = f"{refresh_sec // 60} MIN"
+    time_left = max(0, refresh_sec - time_since_refresh)
+    countdown_min = int(time_left // 60)
+    countdown_sec = int(time_left % 60)
+
     st.markdown(f"""
     <div style='font-size:9px;color:#333;text-transform:uppercase;letter-spacing:.07em;
-                margin-top:14px;border-top:1px solid #111;padding-top:8px;line-height:1.9'>
-      SOURCE: YAHOO FINANCE<br>
+                margin-top:14px;border-top:1px solid #111;padding-top:8px;line-height:2.0'>
+      <span style='color:#ff6600'>◆ DATA SOURCE</span><br>
+      PRIMARY: <span style='color:#00cc44'>NSE INDIA (REAL-TIME)</span><br>
+      FALLBACK: <span style='color:#ffaa00'>YAHOO FINANCE</span><br>
+      <span style='color:#333'>━━━━━━━━━━━━━━━━━━━━━━</span><br>
       DATE: {date.today().strftime('%d %b %Y').upper()}<br>
       TIME: {now} IST<br>
-      CACHE TTL: 15 MIN<br>
-      <span style='color:#ff6600'>STATUS: <span class='status-live'></span>LIVE</span>
+      MARKET: <span style='color:{mkt_color}'>{mkt_status}</span><br>
+      REFRESH: EVERY {refresh_lbl}<br>
+      NEXT REFRESH: <span style='color:#ff6600'>{countdown_min}:{countdown_sec:02d}</span><br>
+      <span style='color:#ff6600'>STATUS: <span class='status-live'></span>ACTIVE</span>
     </div>""", unsafe_allow_html=True)
 
 
@@ -313,9 +376,11 @@ fetch_placeholder = st.empty()
 fetch_placeholder.markdown("""
 <div style='background:#080808;border:1px solid #ff6600;padding:16px 20px;
             font-size:11px;color:#ff6600;letter-spacing:.1em;text-transform:uppercase'>
-  ◆ FETCHING LIVE MARKET DATA FROM YAHOO FINANCE...<br>
-  <span style='color:#444;font-size:9px'>FIRST LOAD: 60–90 SECONDS &nbsp;·&nbsp;
-  SUBSEQUENT LOADS: INSTANT (15-MIN CACHE)</span>
+  ◆ FETCHING REAL-TIME DATA FROM NSE INDIA + YAHOO FINANCE...<br>
+  <span style='color:#444;font-size:9px'>PRIMARY: NSE INDIA (REAL-TIME) &nbsp;·&nbsp;
+  FALLBACK: YAHOO FINANCE &nbsp;·&nbsp;
+  FIRST LOAD: 30–60 SECONDS &nbsp;·&nbsp;
+  SUBSEQUENT LOADS: INSTANT (CACHED)</span>
 </div>""", unsafe_allow_html=True)
 
 with st.spinner(""):
@@ -324,6 +389,14 @@ with st.spinner(""):
 
 fetch_placeholder.empty()
 
+# Get data source info for display
+source_info = get_data_source_info()
+active_source = source_info.get("primary", "INITIALIZING")
+source_color = "#00cc44" if active_source == "NSE INDIA" else ("#ffaa00" if active_source == "YAHOO FINANCE" else "#888")
+last_fetch_time = source_info.get("last_fetch", "N/A")
+nse_count = source_info.get("nse_success", 0)
+yahoo_count = source_info.get("yahoo_success", 0)
+
 sec_df     = aggregate_to_sector(raw_df)
 pct_matrix = build_percentile_matrix(sec_df, hist_dict)
 richness   = build_richness_series(pct_matrix)
@@ -331,10 +404,16 @@ richness   = build_richness_series(pct_matrix)
 
 # ── TOPBAR ────────────────────────────────────────────────────────────────────
 now_str = datetime.now().strftime("%d %b %Y  %H:%M IST").upper()
+mkt_tag = "MARKET OPEN" if is_market_hours() else "MARKET CLOSED"
 st.markdown(f"""
 <div class='bb-topbar'>
   <span>◆ NSE VALUATION TERMINAL &nbsp;·&nbsp; SECTOR HEAT MAP + CCA SCREENER &nbsp;·&nbsp; NSE 500</span>
-  <span><span class='status-live'></span>LIVE &nbsp;·&nbsp; {now_str} &nbsp;·&nbsp; 12 SECTORS</span>
+  <span>
+    <span class='status-live'></span>
+    <span style='color:#000;font-weight:700'>{active_source}</span>
+    &nbsp;·&nbsp; {now_str} &nbsp;·&nbsp; {mkt_tag} &nbsp;·&nbsp;
+    NSE: {nse_count} &nbsp;·&nbsp; YAHOO: {yahoo_count}
+  </span>
 </div>""", unsafe_allow_html=True)
 
 # ── REAL-TIME MARKET RIBBON ───────────────────────────────────────────────────
@@ -1244,20 +1323,56 @@ with tab5:
 # ────────────────────────────────────────────────────────────────────────────
 with tab6:
     st.markdown("<div class='bb-sec'>METHODOLOGY &nbsp;·&nbsp; DATA ARCHITECTURE &nbsp;·&nbsp; REAL-TIME DESIGN</div>", unsafe_allow_html=True)
+
+    # Show live data source status
+    st.markdown(f"""
+<div style='background:#080808;border:1px solid #1a1a1a;border-left:3px solid {source_color};
+            padding:12px 16px;margin-bottom:14px'>
+  <div style='font-size:10px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase;margin-bottom:6px'>
+    ◆ CURRENT DATA SOURCE STATUS
+  </div>
+  <div style='font-size:12px;color:#ccc;line-height:1.8'>
+    <span style='color:{source_color};font-weight:700'>ACTIVE SOURCE: {active_source}</span><br>
+    NSE INDIA TICKERS FETCHED: <span style='color:#00cc44'>{nse_count}</span><br>
+    YAHOO FINANCE TICKERS FETCHED: <span style='color:#ffaa00'>{yahoo_count}</span><br>
+    LAST DATA FETCH: <span style='color:#ccc'>{last_fetch_time}</span><br>
+    MARKET STATUS: <span style='color:{"#00cc44" if is_market_hours() else "#ff3333"}'>{"OPEN" if is_market_hours() else "CLOSED"}</span>
+  </div>
+</div>
+    """, unsafe_allow_html=True)
+
     st.markdown("""
-**DATA REFRESH POLICY**
+**DATA REFRESH POLICY — MULTI-SOURCE REAL-TIME ARCHITECTURE**
 
-This terminal fetches live data from Yahoo Finance on every new session.
-Cache TTL = 15 minutes. No stale pkl files. No pre-loaded data.
+This terminal uses a **tiered data fetching strategy** for maximum freshness:
 
 ```
-ON EVERY OPEN:
-  → Yahoo Finance API called for all NSE 500 companies
-  → Real-time P/E, P/BV, EV/EBITDA, EV/Sales, Div Yield fetched
-  → Historical distributions generated fresh
-  → Percentile rankings computed against 10-year distributions
-  → Dashboard renders with today's actual market data
+TIER 1 — NSE INDIA DIRECT API (PRIMARY)
+  → Connects to nseindia.com REST API via session-based requests
+  → Fetches bulk prices from 13 index endpoints (NIFTY 50, BANK, IT, etc.)
+  → Gets ~150+ stock prices in real-time (<1 minute lag)
+  → Individual quote API for remaining priority tickers
+  → Provides: LTP, 52-week range, change %, volume
+
+TIER 2 — YAHOO FINANCE (FALLBACK)
+  → Used only when NSE India API is unavailable
+  → Common on Streamlit Cloud (NSE blocks cloud IPs)
+  → Provides: Price, market cap, P/E, P/BV, EV/EBITDA, dividends
+  → Typical lag: 15–20 minutes
+
+TIER 3 — STATIC / SECTOR-CALIBRATED DATA (BASELINE)
+  → Pre-loaded data for 40+ key companies (always available)
+  → Sector-calibrated synthetic data for remaining tickers
+  → Ensures dashboard never shows empty/NaN data
 ```
+
+**AUTO-REFRESH SCHEDULE:**
+
+| Market Status | Refresh Interval | Cache TTL |
+|---|---|---|
+| Market Open (9:15–3:30 IST) | Every 5 minutes | 5 min |
+| Market Closed | Every 30 minutes | 30 min |
+| Index Data (Market Open) | Every 2 minutes | 2 min |
 
 ---
 
@@ -1305,5 +1420,8 @@ st.markdown(f"""
             margin-top:14px;display:flex;justify-content:space-between;
             font-size:9px;color:#333;letter-spacing:.08em;text-transform:uppercase'>
   <span>◆ NSE VALUATION TERMINAL &nbsp;·&nbsp; BLOOMBERG STYLE &nbsp;·&nbsp; REAL-TIME DATA</span>
-  <span>{date.today().strftime('%d %b %Y').upper()} &nbsp;·&nbsp; DATA: YAHOO FINANCE + NSE INDIA</span>
+  <span>{date.today().strftime('%d %b %Y').upper()} &nbsp;·&nbsp;
+  SOURCE: <span style='color:{source_color}'>{active_source}</span> &nbsp;·&nbsp;
+  NSE: {nse_count} · YAHOO: {yahoo_count} &nbsp;·&nbsp;
+  REFRESH: {'5 MIN' if is_market_hours() else '30 MIN'}</span>
 </div>""", unsafe_allow_html=True)

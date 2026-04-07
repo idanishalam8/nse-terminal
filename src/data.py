@@ -1,19 +1,247 @@
-# data.py — Smart data fetching with reliable fallback
-# Root cause of NaN issue: yfinance rate-limits Streamlit Cloud when
-# fetching 180+ tickers simultaneously. Solution:
-#   1. Use static COMPANY_DATA for known companies (always works)
-#   2. Try live yfinance only for top 30 priority tickers
-#   3. Generate sector-calibrated data for remaining tickers
-#   4. Always return complete DataFrame — never all-NaN
+# data.py — Multi-source real-time data fetching
+# Architecture:
+#   1. PRIMARY: Direct NSE India API (real-time, <1 min lag)
+#   2. FALLBACK: Yahoo Finance (15-min to hours delayed)
+#   3. STATIC: Pre-loaded company data for known companies
+#   4. SYNTHETIC: Sector-calibrated data for remaining tickers
+#   5. Always return complete DataFrame — never all-NaN
 
-import time, warnings
+import time, warnings, logging
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
-from datetime import date
+from datetime import date, datetime
 from src.config import NSE500, ALL_TICKERS, HIST_PARAMS, NUMERIC_COLS
 
 warnings.filterwarnings("ignore")
+log = logging.getLogger(__name__)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NSE INDIA DIRECT API SESSION
+# ══════════════════════════════════════════════════════════════════════════════
+
+class NSESession:
+    """
+    Session-based client for NSE India's REST API.
+    Mimics a browser by visiting the homepage first to acquire cookies,
+    then uses those cookies to hit data endpoints.
+    """
+    BASE_URL = "https://www.nseindia.com"
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.nseindia.com/",
+        "Connection": "keep-alive",
+        "DNT": "1",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
+    }
+
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update(self.HEADERS)
+        self._cookies_valid = False
+        self._last_request_time = 0
+        self._min_delay = 0.35   # Seconds between requests to avoid rate-limit
+
+    def _ensure_cookies(self):
+        """Visit NSE homepage to establish session cookies."""
+        if self._cookies_valid:
+            return True
+        try:
+            resp = self.session.get(self.BASE_URL, timeout=10)
+            if resp.status_code == 200:
+                self._cookies_valid = True
+                return True
+        except Exception as e:
+            log.warning(f"NSE cookie init failed: {e}")
+        return False
+
+    def _rate_limit(self):
+        """Enforce minimum delay between requests."""
+        elapsed = time.time() - self._last_request_time
+        if elapsed < self._min_delay:
+            time.sleep(self._min_delay - elapsed)
+        self._last_request_time = time.time()
+
+    def get(self, url, retries=2):
+        """
+        GET request with cookie management and retry.
+        Returns parsed JSON dict or None on failure.
+        """
+        for attempt in range(retries + 1):
+            try:
+                if not self._ensure_cookies():
+                    continue
+                self._rate_limit()
+                resp = self.session.get(url, timeout=10)
+                if resp.status_code == 200:
+                    return resp.json()
+                elif resp.status_code == 401:
+                    # Cookie expired — refresh
+                    self._cookies_valid = False
+                    continue
+                else:
+                    log.warning(f"NSE API {resp.status_code} for {url}")
+            except requests.exceptions.Timeout:
+                log.warning(f"NSE API timeout for {url}")
+            except Exception as e:
+                log.warning(f"NSE API error: {e}")
+                self._cookies_valid = False
+        return None
+
+    def get_equity_quote(self, symbol: str) -> dict:
+        """Fetch real-time quote for an NSE equity symbol (e.g., 'RELIANCE')."""
+        url = f"{self.BASE_URL}/api/quote-equity?symbol={requests.utils.quote(symbol)}"
+        return self.get(url)
+
+    def get_index_data(self, index: str = "NIFTY 50") -> dict:
+        """Fetch real-time data for an NSE index."""
+        url = f"{self.BASE_URL}/api/equity-stockIndices?index={requests.utils.quote(index)}"
+        return self.get(url)
+
+
+def _parse_nse_quote(data: dict, ticker: str) -> dict:
+    """
+    Extract useful fields from NSE quote-equity JSON response.
+    Returns a dict with standardized keys matching our DataFrame columns.
+    """
+    if not data:
+        return {}
+
+    result = {}
+    try:
+        price_info = data.get("priceInfo", {})
+        info = data.get("info", {})
+        metadata = data.get("metadata", {})
+        security_info = data.get("securityInfo", {})
+
+        # Price data — real-time
+        ltp = price_info.get("lastPrice")
+        if ltp is not None:
+            result["price"] = float(ltp)
+
+        prev_close = price_info.get("previousClose")
+        if prev_close is not None:
+            result["prev_close"] = float(prev_close)
+
+        change = price_info.get("change")
+        if change is not None:
+            result["change"] = float(change)
+
+        pchange = price_info.get("pChange")
+        if pchange is not None:
+            result["change_pct"] = float(pchange)
+
+        # Intraday range
+        intra = price_info.get("intraDayHighLow", {})
+        if intra.get("max"):
+            result["day_high"] = float(intra["max"])
+        if intra.get("min"):
+            result["day_low"] = float(intra["min"])
+
+        # 52-week range
+        week52 = price_info.get("weekHighLow", {})
+        if week52.get("max"):
+            result["52w_high"] = float(week52["max"])
+        if week52.get("min"):
+            result["52w_low"] = float(week52["min"])
+
+        # Industry PE (sector-level, useful)
+        industry_pe = metadata.get("pdSectorPe")
+        if industry_pe and str(industry_pe).replace('.','',1).isdigit():
+            result["sector_pe"] = float(industry_pe)
+
+        # Symbol PE
+        symbol_pe = metadata.get("pdSymbolPe")
+        if symbol_pe and str(symbol_pe).replace('.','',1).isdigit():
+            result["pe"] = float(symbol_pe)
+
+        # Market cap (from security info, in lakhs on NSE → convert)
+        # NSE provides face value but not always market cap directly in quote
+        # We calculate it from totalTradedVolume × price if needed
+
+        # traded volume
+        total_vol = price_info.get("totalTradedVolume")
+        if total_vol:
+            result["volume"] = int(total_vol)
+
+        result["_source"] = "NSE"
+
+    except Exception as e:
+        log.warning(f"NSE quote parse error for {ticker}: {e}")
+
+    return result
+
+
+def _parse_nse_index(data: dict) -> dict:
+    """
+    Parse NSE index API response.
+    Returns dict like: {"NIFTY 50": {"price": ..., "change": ..., "change_pct": ...}}
+    """
+    if not data:
+        return {}
+
+    result = {}
+    try:
+        # The response has "metadata" for the index itself
+        metadata = data.get("metadata", {})
+        index_name = metadata.get("indexName", "")
+        last = metadata.get("last")
+        change = metadata.get("change")
+        pchange = metadata.get("percentChange")
+
+        if last:
+            result[index_name] = {
+                "price": round(float(last), 2),
+                "change": round(float(change), 2) if change else 0.0,
+                "change_pct": round(float(pchange), 2) if pchange else 0.0,
+            }
+
+        # Also parse individual stocks in the index for bulk data
+        stock_data = {}
+        for item in data.get("data", []):
+            symbol = item.get("symbol", "")
+            if symbol and symbol != index_name:
+                ltp = item.get("lastPrice")
+                if ltp:
+                    stock_data[symbol] = {
+                        "price": float(str(ltp).replace(",", "")),
+                        "change": float(item.get("change", 0)),
+                        "change_pct": float(item.get("pChange", 0)),
+                        "day_high": float(item.get("dayHigh", 0)),
+                        "day_low": float(item.get("dayLow", 0)),
+                        "open": float(item.get("open", 0)),
+                        "prev_close": float(item.get("previousClose", 0)),
+                        "year_high": float(item.get("yearHigh", 0)),
+                        "year_low": float(item.get("yearLow", 0)),
+                        "pe": float(item.get("perChange365d", 0)),  # will be overridden
+                    }
+        result["_stocks"] = stock_data
+    except Exception as e:
+        log.warning(f"NSE index parse error: {e}")
+
+    return result
+
+
+# Track data source globally for UI display
+_data_source_info = {
+    "primary": "INITIALIZING",
+    "nse_success": 0,
+    "yahoo_success": 0,
+    "nse_fail": 0,
+    "last_fetch": None,
+}
+
+def get_data_source_info() -> dict:
+    """Return info about which data source is active."""
+    return _data_source_info.copy()
 
 # ── Current sector valuations (April 2026, NSE official data calibrated) ─────
 SECTOR_VALS = {
@@ -125,23 +353,121 @@ def _row_from_sector(ticker: str) -> dict:
     return row
 
 
+def _ticker_to_nse_symbol(ticker: str) -> str:
+    """Convert yfinance ticker (e.g., 'RELIANCE.NS') to NSE symbol ('RELIANCE')."""
+    return ticker.replace(".NS", "")
+
+
+def _fetch_nse_bulk_prices(nse: NSESession) -> dict:
+    """
+    Fetch bulk real-time prices from NSE by pulling index constituents.
+    This gets 50+ stock prices in a single API call (much faster than individual).
+    Returns: dict of {NSE_SYMBOL: {price, change_pct, year_high, year_low, ...}}
+    """
+    bulk = {}
+    indices_to_fetch = [
+        "NIFTY 50", "NIFTY NEXT 50", "NIFTY MIDCAP 50",
+        "NIFTY BANK", "NIFTY IT", "NIFTY PHARMA",
+        "NIFTY AUTO", "NIFTY METAL", "NIFTY ENERGY",
+        "NIFTY FMCG", "NIFTY REALTY", "NIFTY INFRA",
+        "NIFTY FINANCIAL SERVICES",
+    ]
+    for idx in indices_to_fetch:
+        data = nse.get_index_data(idx)
+        if data:
+            parsed = _parse_nse_index(data)
+            stocks = parsed.get("_stocks", {})
+            for sym, d in stocks.items():
+                if sym not in bulk:  # Don't overwrite if already fetched
+                    bulk[sym] = d
+    return bulk
+
+
 def fetch_all_live(progress_cb=None) -> pd.DataFrame:
     """
-    Build complete company DataFrame.
-    Uses static data for known companies, sector-derived for others.
-    Tries live yfinance for top-30 priority tickers.
+    Build complete company DataFrame with multi-source real-time data.
+
+    Strategy:
+      1. Start with static/sector data as baseline (instant, reliable)
+      2. Try NSE India direct API — bulk index fetch for major stocks
+      3. Try NSE individual quotes for remaining priority tickers
+      4. Fall back to Yahoo Finance for any tickers NSE missed
+      5. Update data source tracking for UI
     """
+    global _data_source_info
     tickers = list(ALL_TICKERS.keys())
 
-    # Step 1: Populate from static data first (instant, reliable)
+    # Step 1: Populate from static data first (instant, reliable baseline)
     rows_dict = {t: (_row_from_static(t) if t in STATIC else _row_from_sector(t))
                  for t in tickers}
 
-    # Step 2: Try live refresh for top-30 priority tickers
-    priority = list(STATIC.keys())[:30]
-    for i, ticker in enumerate(priority):
+    nse_ok = 0
+    nse_fail = 0
+    yahoo_ok = 0
+    nse_available = False
+
+    # ── Step 2: Try NSE India direct API (BULK — fast) ─────────────────────
+    try:
+        nse = NSESession()
+        bulk_prices = _fetch_nse_bulk_prices(nse)
+        if bulk_prices:
+            nse_available = True
+            for ticker in tickers:
+                sym = _ticker_to_nse_symbol(ticker)
+                if sym in bulk_prices:
+                    bp = bulk_prices[sym]
+                    if bp.get("price"):
+                        rows_dict[ticker]["price"] = round(bp["price"], 1)
+                        nse_ok += 1
+                    if bp.get("year_high"):
+                        rows_dict[ticker]["52w_high"] = bp["year_high"]
+                    if bp.get("year_low"):
+                        rows_dict[ticker]["52w_low"] = bp["year_low"]
+                    if bp.get("prev_close"):
+                        rows_dict[ticker]["_prev_close"] = bp["prev_close"]
+                    if bp.get("change_pct"):
+                        rows_dict[ticker]["_change_pct"] = bp["change_pct"]
+
+            log.info(f"NSE bulk fetch: {nse_ok} tickers updated")
+    except Exception as e:
+        log.warning(f"NSE bulk fetch failed: {e}")
+
+    # ── Step 3: NSE individual quotes for priority tickers not in bulk ──────
+    if nse_available:
+        priority = list(STATIC.keys())[:30]
+        for i, ticker in enumerate(priority):
+            if progress_cb:
+                progress_cb(i / len(tickers), ticker)
+            sym = _ticker_to_nse_symbol(ticker)
+            if sym in bulk_prices and bulk_prices[sym].get("price"):
+                continue  # Already got from bulk
+
+            try:
+                data = nse.get_equity_quote(sym)
+                parsed = _parse_nse_quote(data, ticker)
+                if parsed.get("price"):
+                    rows_dict[ticker]["price"] = round(parsed["price"], 1)
+                    nse_ok += 1
+                if parsed.get("pe"):
+                    rows_dict[ticker]["pe"] = parsed["pe"]
+                if parsed.get("52w_high"):
+                    rows_dict[ticker]["52w_high"] = parsed["52w_high"]
+                if parsed.get("52w_low"):
+                    rows_dict[ticker]["52w_low"] = parsed["52w_low"]
+            except Exception:
+                nse_fail += 1
+
+    # ── Step 4: Yahoo Finance fallback for tickers NSE missed ──────────────
+    priority_yf = list(STATIC.keys())[:30]
+    for i, ticker in enumerate(priority_yf):
         if progress_cb:
-            progress_cb(i / len(tickers), ticker)
+            progress_cb((i + 30) / len(tickers), ticker)
+        # Skip if NSE already got a good price
+        if nse_available:
+            sym = _ticker_to_nse_symbol(ticker)
+            if sym in bulk_prices and bulk_prices[sym].get("price"):
+                continue
+
         try:
             t    = yf.Ticker(ticker)
             fi   = t.fast_info
@@ -150,6 +476,7 @@ def fetch_all_live(progress_cb=None) -> pd.DataFrame:
 
             if price and not (isinstance(price, float) and np.isnan(price)):
                 rows_dict[ticker]["price"]  = round(float(price), 1)
+                yahoo_ok += 1
             if mc and not (isinstance(mc, float) and np.isnan(mc)):
                 rows_dict[ticker]["mktcap"] = float(mc)
 
@@ -168,6 +495,19 @@ def fetch_all_live(progress_cb=None) -> pd.DataFrame:
         except Exception:
             pass
         time.sleep(0.1)
+
+    # ── Update data source info for UI ─────────────────────────────────────
+    if nse_ok > 0:
+        _data_source_info["primary"] = "NSE INDIA"
+    elif yahoo_ok > 0:
+        _data_source_info["primary"] = "YAHOO FINANCE"
+    else:
+        _data_source_info["primary"] = "STATIC / CACHED"
+
+    _data_source_info["nse_success"] = nse_ok
+    _data_source_info["yahoo_success"] = yahoo_ok
+    _data_source_info["nse_fail"] = nse_fail
+    _data_source_info["last_fetch"] = datetime.now().strftime("%H:%M:%S IST")
 
     return pd.DataFrame(list(rows_dict.values()))
 
@@ -270,16 +610,45 @@ def aggregate_to_sector(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def fetch_index_data() -> dict:
-    """Fetch live Nifty 50, Nifty Bank, Nifty IT prices from Yahoo Finance."""
-    indices = {
-        "^NSEI":    {"name": "NIFTY 50",   "fallback": 22450.0},
-        "^NSEBANK": {"name": "NIFTY BANK", "fallback": 48200.0},
-        "^CNXIT":   {"name": "NIFTY IT",   "fallback": 33800.0},
+    """
+    Fetch live Nifty 50, Nifty Bank, Nifty IT prices.
+    PRIMARY: NSE India direct API (real-time)
+    FALLBACK: Yahoo Finance
+    LAST RESORT: Static fallback with simulated change
+    """
+    indices_nse = {
+        "NIFTY 50":   {"yahoo": "^NSEI",    "fallback": 22450.0},
+        "NIFTY BANK": {"yahoo": "^NSEBANK", "fallback": 48200.0},
+        "NIFTY IT":   {"yahoo": "^CNXIT",   "fallback": 33800.0},
     }
     result = {}
-    for symbol, meta in indices.items():
+
+    # ── Try NSE India direct first ─────────────────────────────────────────
+    nse_tried = False
+    try:
+        nse = NSESession()
+        for nse_name, meta in indices_nse.items():
+            data = nse.get_index_data(nse_name)
+            if data:
+                parsed = _parse_nse_index(data)
+                if nse_name in parsed:
+                    result[nse_name] = parsed[nse_name]
+                    result[nse_name]["_source"] = "NSE"
+                    nse_tried = True
+    except Exception as e:
+        log.warning(f"NSE index fetch failed: {e}")
+
+    # ── Yahoo Finance fallback for missing indices ─────────────────────────
+    yahoo_map = {
+        "^NSEI":    "NIFTY 50",
+        "^NSEBANK": "NIFTY BANK",
+        "^CNXIT":   "NIFTY IT",
+    }
+    for yahoo_sym, nse_name in yahoo_map.items():
+        if nse_name in result:
+            continue  # Already got from NSE
         try:
-            t = yf.Ticker(symbol)
+            t = yf.Ticker(yahoo_sym)
             fi = t.fast_info
             price = getattr(fi, "last_price", None)
             prev  = getattr(fi, "previous_close", None)
@@ -289,23 +658,26 @@ def fetch_index_data() -> dict:
                 if prev and not (isinstance(prev, float) and np.isnan(prev)) and prev > 0:
                     chg = float(price) - float(prev)
                     chg_pct = (chg / float(prev)) * 100
-                result[meta["name"]] = {
+                result[nse_name] = {
                     "price": round(float(price), 2),
                     "change": round(chg, 2),
                     "change_pct": round(chg_pct, 2),
+                    "_source": "YAHOO",
                 }
             else:
                 raise ValueError("No live price")
         except Exception:
-            # Fallback with simulated change
-            rng = np.random.default_rng(abs(hash(symbol + str(date.today()))) % (2**31))
-            fb  = meta["fallback"]
+            # Static fallback
+            fb = indices_nse[nse_name]["fallback"]
+            rng = np.random.default_rng(abs(hash(yahoo_sym + str(date.today()))) % (2**31))
             chg = round(fb * rng.uniform(-0.015, 0.015), 2)
-            result[meta["name"]] = {
+            result[nse_name] = {
                 "price": round(fb + chg, 2),
                 "change": round(chg, 2),
                 "change_pct": round(chg / fb * 100, 2),
+                "_source": "STATIC",
             }
+
     return result
 
 
