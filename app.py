@@ -58,13 +58,35 @@ tr:first-child td{color:#ff9944 !important;font-weight:600 !important;background
 [data-testid="stDataFrame"]{border:1px solid #1a1a1a !important}
 
 /* Expander */
-.streamlit-expanderHeader{background:#0a0a0a !important;color:#ff6600 !important;font-size:9px !important;text-transform:uppercase !important;letter-spacing:.12em !important;border:1px solid #1a1a1a !important;border-radius:0 !important}
-.streamlit-expanderHeader svg{color:#ff6600 !important;fill:#ff6600 !important}
-[data-testid="stExpander"] summary{background:#0a0a0a !important;border:1px solid #1a1a1a !important;border-radius:0 !important}
-[data-testid="stExpander"] summary span{color:#ff6600 !important;font-size:9px !important;text-transform:uppercase !important;letter-spacing:.12em !important}
-[data-testid="stExpander"] summary svg{color:#ff6600 !important}
-/* Hide broken icon text fallback */
-[data-testid="stExpander"] summary p{display:none !important}
+/* Expander — hide broken Material Icons text, use CSS arrow instead */
+[data-testid="stExpander"]{border:none !important}
+[data-testid="stExpander"] details{border:1px solid #1a1a1a !important;border-radius:0 !important}
+[data-testid="stExpander"] details summary{
+  background:#0a0a0a !important;border:none !important;
+  border-radius:0 !important;padding:8px 12px !important;
+  list-style:none !important;cursor:pointer !important}
+[data-testid="stExpander"] details summary::-webkit-details-marker{display:none !important}
+[data-testid="stExpander"] details summary::marker{display:none !important}
+[data-testid="stExpander"] details summary p{
+  display:none !important}
+[data-testid="stExpander"] details summary span[data-testid="stExpanderToggleIcon"]{
+  display:none !important}
+/* Hide the broken icon span entirely */
+[data-testid="stExpander"] summary > div > span:first-child{display:none !important}
+[data-testid="stExpander"] summary .eyeumkm0{display:none !important}
+/* Custom arrow via label */
+[data-testid="stExpander"] details summary::before{
+  content:"▶  ";color:#ff6600;font-size:9px;font-family:'Courier New',monospace;
+  letter-spacing:.1em}
+[data-testid="stExpander"] details[open] summary::before{
+  content:"▼  ";color:#ff6600;font-size:9px;font-family:'Courier New',monospace;
+  letter-spacing:.1em}
+[data-testid="stExpander"] details summary div[data-testid="stMarkdownContainer"] p{
+  display:block !important;color:#ff6600 !important;font-size:9px !important;
+  font-family:'Courier New',monospace !important;text-transform:uppercase !important;
+  letter-spacing:.15em !important;margin:0 !important}
+.streamlit-expanderHeader{background:#0a0a0a !important;border:1px solid #1a1a1a !important;border-radius:0 !important}
+.streamlit-expanderHeader p{color:#ff6600 !important;font-size:9px !important;text-transform:uppercase !important;letter-spacing:.15em !important;font-family:'Courier New',monospace !important}
 
 /* Scrollbar */
 ::-webkit-scrollbar{width:3px;height:3px}
@@ -286,7 +308,7 @@ with tab1:
               <div style='font-size:9px;color:#333'>{rng}</div>
             </div>""", unsafe_allow_html=True)
 
-    with st.expander("RAW PERCENTILE DATA"):
+    with st.expander("RAW PERCENTILE DATA", expanded=False):
         st.dataframe(
             disp.rename(columns=METRIC_LABELS)
                 .rename(index=lambda s: s.upper())
@@ -294,7 +316,7 @@ with tab1:
                 .format("{:.0f}", na_rep="—"),
             use_container_width=True)
 
-    with st.expander("CURRENT SECTOR MULTIPLES (LIVE)"):
+    with st.expander("CURRENT SECTOR MULTIPLES (LIVE)", expanded=False):
         st.dataframe(
             sec_df.rename(columns=METRIC_LABELS)
                   .rename(index=lambda s: s.upper())
@@ -549,7 +571,7 @@ with tab4:
                 st.plotly_chart(draw_price_chart(ph, tname), use_container_width=True)
 
             # Fundamentals
-            with st.expander("FUNDAMENTAL DATA"):
+            with st.expander("FUNDAMENTAL DATA", expanded=False):
                 fitems = [("REVENUE","revenue"),("EBITDA","ebitda"),("NET INCOME","net_income"),
                           ("TOTAL DEBT","total_debt"),("CASH","cash"),("ROE","roe"),
                           ("OPER MARGIN","operating_margin"),("NET MARGIN","net_margin"),
@@ -568,7 +590,7 @@ with tab4:
                 if frows:
                     st.dataframe(pd.DataFrame(frows), hide_index=True, use_container_width=True)
 
-            with st.expander("PEER SUMMARY STATISTICS"):
+            with st.expander("PEER SUMMARY STATISTICS", expanded=False):
                 if not pstats.empty:
                     st.dataframe(pstats.style.format(
                         {c: "{:.1f}" for c in ["Mean","Median","Min","Max","P25","P75"]},
