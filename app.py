@@ -272,9 +272,22 @@ from src.analytics import (build_percentile_matrix, build_richness_series,
 from src.charts import (draw_heatmap, draw_ranking, draw_history, draw_radar,
                         draw_football_field, draw_premium_discount, draw_price_chart,
                         METRIC_LABELS)
+from src.macro import (SECTOR_CYCLE, MACRO_DATA, RATE_SENSITIVITY, REGULATORY_RISK,
+                       PROMOTER_DATA, compute_earnings_quality, fetch_sector_news,
+                       fetch_company_news, get_sector_macro_impact)
 
 SECTOR_LIST  = list(NSE500.keys())
 TICKER_NAMES = {t: f"{d['name']}  [{t.replace('.NS','')}]" for t, d in ALL_TICKERS.items()}
+
+
+# Cached news loaders (15-min TTL)
+@st.cache_data(ttl=900, show_spinner=False)
+def load_sector_news(sector: str):
+    return fetch_sector_news(sector, max_items=6)
+
+@st.cache_data(ttl=900, show_spinner=False)
+def load_company_news(company_name: str, ticker: str):
+    return fetch_company_news(company_name, ticker, max_items=6)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -724,8 +737,127 @@ with tab3:
             st.plotly_chart(draw_radar(pct_matrix.loc[sel_sec], sel_sec),
                             use_container_width=True)
 
+    # ── BUSINESS CYCLE ANALYSIS ───────────────────────────────────────────
+    st.markdown("<div class='bb-sec'>BUSINESS CYCLE ANALYSIS &nbsp;·&nbsp; SECTOR POSITIONING</div>", unsafe_allow_html=True)
 
-# ────────────────────────────────────────────────────────────────────────────
+    cycle = SECTOR_CYCLE.get(sel_sec, {})
+    if cycle:
+        phase = cycle.get("phase", "Unknown")
+        phase_score = cycle.get("phase_score", 50)
+        trend = cycle.get("trend", "stable")
+        cyc_color = cycle.get("color", "#888")
+        drivers = cycle.get("drivers", [])
+        risks = cycle.get("risks", [])
+        outlook = cycle.get("outlook", "")
+
+        # Phase icons
+        phase_icons = {"Expansion": "📈", "Peak": "🔺", "Contraction": "📉", "Recovery": "🔄"}
+        trend_icons = {"improving": "▲ IMPROVING", "stable": "▶ STABLE", "deteriorating": "▼ DETERIORATING"}
+        phase_icon = phase_icons.get(phase, "◆")
+        trend_label = trend_icons.get(trend, trend.upper())
+
+        # Phase gauge bar
+        gauge_segments = [
+            ("Recovery", 0, 25, "#44ff88"),
+            ("Expansion", 25, 50, "#00cc44"),
+            ("Peak", 50, 75, "#ff3333"),
+            ("Contraction", 75, 100, "#ff6644"),
+        ]
+        gauge_html = "<div style='display:flex;height:6px;border-radius:3px;overflow:hidden;margin:8px 0'>"
+        for seg_name, seg_start, seg_end, seg_color in gauge_segments:
+            opacity = "1.0" if seg_name == phase else "0.15"
+            gauge_html += f"<div style='flex:1;background:{seg_color};opacity:{opacity}'></div>"
+        gauge_html += "</div>"
+        gauge_labels = "<div style='display:flex;font-size:7px;color:#444;letter-spacing:.08em;text-transform:uppercase'>"
+        for seg_name, *_ in gauge_segments:
+            fw = "700" if seg_name == phase else "400"
+            c = "#ccc" if seg_name == phase else "#333"
+            gauge_labels += f"<div style='flex:1;text-align:center;font-weight:{fw};color:{c}'>{seg_name}</div>"
+        gauge_labels += "</div>"
+
+        st.markdown(f"""
+        <div style='background:#080808;border:1px solid #1a1a1a;border-left:3px solid {cyc_color};
+                     padding:14px 18px;margin:8px 0'>
+          <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'>
+            <div>
+              <span style='font-size:20px'>{phase_icon}</span>
+              <span style='font-size:15px;font-weight:700;color:{cyc_color};letter-spacing:.08em;margin-left:8px'>
+                {phase.upper()}
+              </span>
+              <span style='font-size:9px;color:#555;margin-left:10px;letter-spacing:.1em'>
+                {trend_label}
+              </span>
+            </div>
+            <div style='text-align:right'>
+              <span style='font-size:26px;font-weight:700;color:{cyc_color}'>{phase_score}</span>
+              <span style='font-size:10px;color:#444'>/100</span>
+            </div>
+          </div>
+          {gauge_html}
+          {gauge_labels}
+        </div>""", unsafe_allow_html=True)
+
+        drv_col, rsk_col = st.columns(2)
+        with drv_col:
+            drivers_html = "".join([f"<div style='padding:4px 0;border-bottom:1px solid #0a0a0a'><span style='color:#00cc44;margin-right:6px'>▲</span>{d}</div>" for d in drivers])
+            st.markdown(f"""
+            <div style='background:#080808;border:1px solid #1a1a1a;padding:12px 16px'>
+              <div style='font-size:9px;color:#00cc44;letter-spacing:.15em;margin-bottom:8px;text-transform:uppercase'>
+                ◆ GROWTH DRIVERS
+              </div>
+              <div style='font-size:10px;color:#aaa;line-height:1.8'>{drivers_html}</div>
+            </div>""", unsafe_allow_html=True)
+        with rsk_col:
+            risks_html = "".join([f"<div style='padding:4px 0;border-bottom:1px solid #0a0a0a'><span style='color:#ff3333;margin-right:6px'>▼</span>{r}</div>" for r in risks])
+            st.markdown(f"""
+            <div style='background:#080808;border:1px solid #1a1a1a;padding:12px 16px'>
+              <div style='font-size:9px;color:#ff3333;letter-spacing:.15em;margin-bottom:8px;text-transform:uppercase'>
+                ◆ KEY RISKS
+              </div>
+              <div style='font-size:10px;color:#aaa;line-height:1.8'>{risks_html}</div>
+            </div>""", unsafe_allow_html=True)
+
+        if outlook:
+            st.markdown(f"""
+            <div style='background:#0a0600;border:1px solid #2a1800;border-left:3px solid #ff6600;
+                         padding:12px 16px;margin-top:6px'>
+              <div style='font-size:9px;color:#ff6600;letter-spacing:.15em;margin-bottom:6px;text-transform:uppercase'>
+                ◆ SECTOR OUTLOOK
+              </div>
+              <div style='font-size:11px;color:#ccc;line-height:1.8'>{outlook}</div>
+            </div>""", unsafe_allow_html=True)
+
+    # ── SECTOR NEWS FEED ──────────────────────────────────────────────────
+    st.markdown("<div class='bb-sec'>SECTOR NEWS FEED &nbsp;·&nbsp; LIVE &nbsp;·&nbsp; GOOGLE NEWS</div>", unsafe_allow_html=True)
+    sector_news = load_sector_news(sel_sec)
+    if sector_news:
+        for ni, news in enumerate(sector_news):
+            border_c = "#ff6600" if ni == 0 else "#111"
+            st.markdown(f"""
+            <div style='background:#080808;border:1px solid #1a1a1a;border-left:2px solid {border_c};
+                         padding:10px 14px;margin-bottom:4px'>
+              <div style='display:flex;justify-content:space-between;align-items:flex-start'>
+                <div style='font-size:11px;color:#ccc;line-height:1.6;flex:1;margin-right:12px'>
+                  <a href="{news['link']}" target="_blank" style="color:#ccc;text-decoration:none">
+                    {news['title']}
+                  </a>
+                </div>
+                <div style='font-size:8px;color:#555;white-space:nowrap;letter-spacing:.1em'>
+                  {news['time_ago']}
+                </div>
+              </div>
+              <div style='font-size:8px;color:#444;margin-top:4px;letter-spacing:.08em;text-transform:uppercase'>
+                {news['source']}
+              </div>
+            </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style='background:#080808;border:1px solid #1a1a1a;padding:14px;text-align:center;
+                     font-size:10px;color:#555;letter-spacing:.1em'>
+          NEWS FEED UNAVAILABLE — CHECK CONNECTION OR TRY AGAIN LATER
+        </div>""", unsafe_allow_html=True)
+
+
 # TAB 4 · CCA SCREENER
 # ────────────────────────────────────────────────────────────────────────────
 with tab4:
@@ -904,6 +1036,212 @@ with tab4:
                     st.dataframe(pstats.style.format(
                         {c: "{:.1f}" for c in ["Mean","Median","Min","Max","P25","P75"]},
                         na_rep="N/A"), hide_index=True, use_container_width=True)
+
+            # ══════════════════════════════════════════════════════════════════
+            # NEW QUALITATIVE ANALYSIS SECTIONS
+            # ══════════════════════════════════════════════════════════════════
+
+            st.markdown("<div class='bb-sec'>QUALITATIVE ANALYSIS &nbsp;·&nbsp; EARNINGS · MANAGEMENT · MACRO · REGULATORY · NEWS</div>", unsafe_allow_html=True)
+
+            # ── 1. EARNINGS QUALITY ──────────────────────────────────────
+            eq = compute_earnings_quality(trow)
+            eq_score = eq["score"]
+            eq_grade = eq["grade"]
+            eq_color = eq["color"]
+            eq_flags = eq["flags"]
+
+            st.markdown(f"""
+            <div style='background:#080808;border:1px solid #1a1a1a;border-left:3px solid {eq_color};
+                         padding:14px 18px;margin:6px 0'>
+              <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'>
+                <div>
+                  <span style='font-size:9px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase'>
+                    ◆ EARNINGS QUALITY
+                  </span>
+                </div>
+                <div>
+                  <span style='font-size:30px;font-weight:700;color:{eq_color}'>{eq_grade}</span>
+                  <span style='font-size:12px;color:#444;margin-left:6px'>({eq_score}/100)</span>
+                </div>
+              </div>
+              <div style='background:#0a0a0a;height:8px;border-radius:4px;overflow:hidden;margin:6px 0'>
+                <div style='height:100%;width:{eq_score}%;background:linear-gradient(90deg, {eq_color}88, {eq_color});
+                             border-radius:4px'></div>
+              </div>
+            </div>""", unsafe_allow_html=True)
+
+            if eq_flags:
+                flags_html = ""
+                for flag_text, flag_color in eq_flags:
+                    flags_html += f"""<span style='display:inline-block;background:#0a0a0a;border:1px solid {flag_color}33;
+                        color:{flag_color};font-size:8px;padding:3px 8px;margin:2px 3px;border-radius:2px;
+                        letter-spacing:.06em'>{flag_text}</span>"""
+                st.markdown(f"<div style='margin:4px 0 10px'>{flags_html}</div>", unsafe_allow_html=True)
+
+            # ── 2. MANAGEMENT ASSESSMENT ─────────────────────────────────
+            mgmt = PROMOTER_DATA.get(sel_ticker, {})
+            if mgmt:
+                prom_pct = mgmt.get("promoter_pct", 0)
+                prom_trend = mgmt.get("trend", "stable")
+                mgmt_quality = mgmt.get("quality", "average")
+                mgmt_score = mgmt.get("score", 50)
+                mq_color = "#00cc44" if mgmt_score >= 80 else ("#ffaa00" if mgmt_score >= 60 else "#ff3333")
+                trend_icon = "▲" if prom_trend == "increasing" else ("▼" if prom_trend == "decreasing" else "▶")
+                trend_color = "#00cc44" if prom_trend == "increasing" else ("#ff3333" if prom_trend == "decreasing" else "#888")
+
+                st.markdown(f"""
+                <div style='background:#080808;border:1px solid #1a1a1a;padding:14px 18px;margin:6px 0'>
+                  <div style='font-size:9px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase;margin-bottom:10px'>
+                    ◆ MANAGEMENT & PROMOTER ASSESSMENT
+                  </div>
+                  <div style='display:flex;gap:16px;flex-wrap:wrap'>
+                    <div style='flex:1;min-width:120px;background:#0a0a0a;padding:10px;text-align:center'>
+                      <div style='font-size:8px;color:#444;letter-spacing:.1em'>PROMOTER HOLDING</div>
+                      <div style='font-size:20px;font-weight:700;color:#fff'>{prom_pct:.1f}%</div>
+                      <div style='font-size:8px;color:{trend_color}'>{trend_icon} {prom_trend.upper()}</div>
+                    </div>
+                    <div style='flex:1;min-width:120px;background:#0a0a0a;padding:10px;text-align:center'>
+                      <div style='font-size:8px;color:#444;letter-spacing:.1em'>MGMT QUALITY</div>
+                      <div style='font-size:20px;font-weight:700;color:{mq_color}'>{mgmt_quality.upper()}</div>
+                      <div style='font-size:8px;color:#444'>SCORE: {mgmt_score}/100</div>
+                    </div>
+                    <div style='flex:1;min-width:120px;background:#0a0a0a;padding:10px;text-align:center'>
+                      <div style='font-size:8px;color:#444;letter-spacing:.1em'>GOVERNANCE</div>
+                      <div style='font-size:20px;font-weight:700;color:{mq_color}'>{"A" if mgmt_score >= 80 else ("B" if mgmt_score >= 60 else "C")}</div>
+                      <div style='font-size:8px;color:#444'>INSTITUTIONAL CONFIDENCE</div>
+                    </div>
+                  </div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style='background:#080808;border:1px solid #1a1a1a;padding:12px 16px;margin:6px 0'>
+                  <div style='font-size:9px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase;margin-bottom:4px'>
+                    ◆ MANAGEMENT & PROMOTER ASSESSMENT
+                  </div>
+                  <div style='font-size:10px;color:#555'>Data not available for this company</div>
+                </div>""", unsafe_allow_html=True)
+
+            # ── 3 & 4. MACRO OUTLOOK + INTEREST RATE SENSITIVITY ─────────
+            macro_impact = get_sector_macro_impact(tsec)
+            rate_data = RATE_SENSITIVITY.get(tsec, {})
+
+            mc1, mc2 = st.columns(2)
+            with mc1:
+                mi_score = macro_impact.get("score", 50)
+                mi_label = macro_impact.get("label", "NEUTRAL")
+                mi_color = macro_impact.get("color", "#ffaa00")
+                st.markdown(f"""
+                <div style='background:#080808;border:1px solid #1a1a1a;border-left:3px solid {mi_color};
+                             padding:14px 18px;margin:6px 0'>
+                  <div style='font-size:9px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase;margin-bottom:8px'>
+                    ◆ MACRO OUTLOOK IMPACT
+                  </div>
+                  <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>
+                    <span style='font-size:14px;font-weight:700;color:{mi_color}'>{mi_label}</span>
+                    <span style='font-size:22px;font-weight:700;color:{mi_color}'>{mi_score}<span style='font-size:9px;color:#444'>/100</span></span>
+                  </div>
+                  <div style='font-size:9px;color:#888;line-height:1.7'>
+                    GDP: <span style='color:#ccc'>{MACRO_DATA["gdp_growth"]}%</span> &nbsp;·&nbsp;
+                    CPI: <span style='color:#ccc'>{MACRO_DATA["inflation_cpi"]}%</span> &nbsp;·&nbsp;
+                    REPO: <span style='color:#ccc'>{MACRO_DATA["repo_rate"]}%</span> &nbsp;·&nbsp;
+                    USD/INR: <span style='color:#ccc'>{MACRO_DATA["usd_inr"]}</span><br>
+                    FII: <span style='color:{"#ff3333" if MACRO_DATA["fii_flow_ytd_cr"] < 0 else "#00cc44"}'>₹{MACRO_DATA["fii_flow_ytd_cr"]:,} Cr</span> &nbsp;·&nbsp;
+                    DII: <span style='color:#00cc44'>₹{MACRO_DATA["dii_flow_ytd_cr"]:,} Cr</span> &nbsp;·&nbsp;
+                    VIX: <span style='color:#ccc'>{MACRO_DATA["india_vix"]}</span>
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            with mc2:
+                rate_sens = rate_data.get("sensitivity", "MEDIUM")
+                rate_dir = rate_data.get("direction", "neutral")
+                rate_score = rate_data.get("score", 50)
+                rate_expl = rate_data.get("explanation", "")
+                rs_color = "#00cc44" if rate_score >= 70 else ("#ffaa00" if rate_score >= 40 else "#ff3333")
+                dir_icon = "▲" if rate_dir == "positive" else ("▼" if rate_dir == "negative" else "▶")
+                st.markdown(f"""
+                <div style='background:#080808;border:1px solid #1a1a1a;border-left:3px solid {rs_color};
+                             padding:14px 18px;margin:6px 0'>
+                  <div style='font-size:9px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase;margin-bottom:8px'>
+                    ◆ INTEREST RATE SENSITIVITY
+                  </div>
+                  <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>
+                    <div>
+                      <span style='font-size:14px;font-weight:700;color:{rs_color}'>{rate_sens}</span>
+                      <span style='font-size:10px;color:#555;margin-left:6px'>{dir_icon} {rate_dir.upper()}</span>
+                    </div>
+                    <span style='font-size:22px;font-weight:700;color:{rs_color}'>{rate_score}<span style='font-size:9px;color:#444'>/100</span></span>
+                  </div>
+                  <div style='font-size:9px;color:#888;line-height:1.7'>
+                    REPO RATE: <span style='color:#ccc'>{MACRO_DATA["repo_rate"]}%</span> &nbsp;·&nbsp;
+                    TREND: <span style='color:#ccc'>{MACRO_DATA["repo_trend"].upper()}</span> &nbsp;·&nbsp;
+                    LAST: <span style='color:#ccc'>{MACRO_DATA["repo_change_last"]}</span>
+                  </div>
+                  <div style='font-size:9px;color:#666;line-height:1.6;margin-top:6px;border-top:1px solid #111;padding-top:6px'>
+                    {rate_expl[:200]}
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            # ── 5. REGULATORY RISK ───────────────────────────────────────
+            reg_data = REGULATORY_RISK.get(tsec, {})
+            if reg_data:
+                reg_level = reg_data.get("level", "MEDIUM")
+                reg_score = reg_data.get("score", 50)
+                reg_color = reg_data.get("color", "#ffaa00")
+                reg_factors = reg_data.get("factors", [])
+                reg_recent = reg_data.get("recent", "")
+
+                factors_html = "".join([f"<div style='padding:3px 0;font-size:9px;color:#aaa'><span style='color:{reg_color};margin-right:6px'>•</span>{f}</div>" for f in reg_factors])
+
+                st.markdown(f"""
+                <div style='background:#080808;border:1px solid #1a1a1a;border-left:3px solid {reg_color};
+                             padding:14px 18px;margin:6px 0'>
+                  <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:10px'>
+                    <div>
+                      <span style='font-size:9px;color:#ff6600;letter-spacing:.15em;text-transform:uppercase'>
+                        ◆ REGULATORY RISK — {tsec.upper()}
+                      </span>
+                    </div>
+                    <div>
+                      <span style='font-size:14px;font-weight:700;color:{reg_color}'>{reg_level}</span>
+                      <span style='font-size:10px;color:#444;margin-left:6px'>({reg_score}/100)</span>
+                    </div>
+                  </div>
+                  <div style='margin-bottom:8px'>{factors_html}</div>
+                  <div style='background:#0a0a0a;padding:8px 12px;font-size:9px;color:#888;line-height:1.7;
+                               border-left:2px solid {reg_color}33'>
+                    <span style='color:#555;letter-spacing:.1em'>RECENT: </span>{reg_recent}
+                  </div>
+                </div>""", unsafe_allow_html=True)
+
+            # ── 6. COMPANY NEWS ──────────────────────────────────────────
+            st.markdown(f"<div class='bb-sec'>COMPANY NEWS &nbsp;·&nbsp; {tname.upper()} &nbsp;·&nbsp; LIVE</div>", unsafe_allow_html=True)
+            company_news = load_company_news(tname, sel_ticker)
+            if company_news:
+                for ni, news in enumerate(company_news):
+                    border_c = "#ff6600" if ni == 0 else "#111"
+                    st.markdown(f"""
+                    <div style='background:#080808;border:1px solid #1a1a1a;border-left:2px solid {border_c};
+                                 padding:10px 14px;margin-bottom:4px'>
+                      <div style='display:flex;justify-content:space-between;align-items:flex-start'>
+                        <div style='font-size:11px;color:#ccc;line-height:1.6;flex:1;margin-right:12px'>
+                          <a href="{news['link']}" target="_blank" style="color:#ccc;text-decoration:none">
+                            {news['title']}
+                          </a>
+                        </div>
+                        <div style='font-size:8px;color:#555;white-space:nowrap;letter-spacing:.1em'>
+                          {news['time_ago']}
+                        </div>
+                      </div>
+                      <div style='font-size:8px;color:#444;margin-top:4px;letter-spacing:.08em;text-transform:uppercase'>
+                        {news['source']}
+                      </div>
+                    </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("""
+                <div style='background:#080808;border:1px solid #1a1a1a;padding:14px;text-align:center;
+                             font-size:10px;color:#555;letter-spacing:.1em'>
+                  COMPANY NEWS UNAVAILABLE — CHECK CONNECTION OR TRY AGAIN LATER
+                </div>""", unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -1120,28 +1458,30 @@ with tab5:
         </div>""", unsafe_allow_html=True)
 
         # ═══════════════════════════════════════════════════════════════════════
-        # STOCK-PERFORMANCE-FOCUSED SCORING (75% stock / 25% sector)
+        # ENHANCED MULTI-SIGNAL SCORING (8 signals, max 12 pts)
+        # Quantitative (75%): Sector + CCA + 52W + Analysts + Fundamentals
+        # Qualitative (25%): Earnings Quality + Macro/Rate + Regulatory
         # ═══════════════════════════════════════════════════════════════════════
 
-        # ── Signal 1: Sector Valuation (weight: 25%, max 2.5 pts) ──────────
+        # ── Signal 1: Sector Valuation (max 2.0 pts) ──────────────────────
         sector_pts = 0.0
-        if sc <= 20:   sector_pts = 2.5
-        elif sc <= 35: sector_pts = 2.0
-        elif sc <= 50: sector_pts = 1.5
-        elif sc <= 65: sector_pts = 1.0
-        elif sc <= 80: sector_pts = 0.5
+        if sc <= 20:   sector_pts = 2.0
+        elif sc <= 35: sector_pts = 1.6
+        elif sc <= 50: sector_pts = 1.2
+        elif sc <= 65: sector_pts = 0.8
+        elif sc <= 80: sector_pts = 0.4
         else:          sector_pts = 0.0
 
-        # ── Signal 2: CCA Premium/Discount vs Peers (weight: 25%, max 2.5 pts) ──
+        # ── Signal 2: CCA Premium/Discount vs Peers (max 2.0 pts) ─────────
         cca_pts = 0.0
-        if avg_prem < -20:   cca_pts = 2.5
-        elif avg_prem < -10: cca_pts = 2.0
-        elif avg_prem < 0:   cca_pts = 1.5
-        elif avg_prem < 10:  cca_pts = 1.0
-        elif avg_prem < 25:  cca_pts = 0.5
+        if avg_prem < -20:   cca_pts = 2.0
+        elif avg_prem < -10: cca_pts = 1.6
+        elif avg_prem < 0:   cca_pts = 1.2
+        elif avg_prem < 10:  cca_pts = 0.8
+        elif avg_prem < 25:  cca_pts = 0.4
         else:                cca_pts = 0.0
 
-        # ── Signal 3: 52-Week Range Position (weight: 20%, max 2 pts) ──────
+        # ── Signal 3: 52-Week Range Position (max 1.5 pts) ────────────────
         h52 = trow.get("52w_high")
         l52 = trow.get("52w_low")
         range_pts = 0.0
@@ -1150,17 +1490,17 @@ with tab5:
             try:
                 p, h, l = float(price), float(h52), float(l52)
                 if h > l and h > 0:
-                    range_pct = ((p - l) / (h - l)) * 100  # 0=at 52w low, 100=at 52w high
-                    drawdown = ((h - p) / h) * 100  # % below 52w high
-                    if drawdown >= 30:   range_pts = 2.0   # Deep correction — attractive
-                    elif drawdown >= 20: range_pts = 1.6
-                    elif drawdown >= 10: range_pts = 1.2
-                    elif drawdown >= 5:  range_pts = 0.8
-                    else:                range_pts = 0.4   # Near highs — less attractive entry
+                    range_pct = ((p - l) / (h - l)) * 100
+                    drawdown = ((h - p) / h) * 100
+                    if drawdown >= 30:   range_pts = 1.5
+                    elif drawdown >= 20: range_pts = 1.2
+                    elif drawdown >= 10: range_pts = 0.9
+                    elif drawdown >= 5:  range_pts = 0.6
+                    else:                range_pts = 0.3
             except (ValueError, TypeError):
                 pass
 
-        # ── Signal 4: Analyst Consensus (weight: 15%, max 1.5 pts) ──────────
+        # ── Signal 4: Analyst Consensus (max 1.5 pts) ─────────────────────
         analyst_pts = 0.0
         rec_upper = rec.upper() if rec else ""
         if "STRONG" in rec_upper and "BUY" in rec_upper:   analyst_pts = 1.5
@@ -1169,9 +1509,9 @@ with tab5:
         elif "HOLD" in rec_upper or "NEUTRAL" in rec_upper: analyst_pts = 0.7
         elif "UNDERPERFORM" in rec_upper:                  analyst_pts = 0.3
         elif "SELL" in rec_upper:                          analyst_pts = 0.0
-        else:                                              analyst_pts = 0.7  # No data = neutral
+        else:                                              analyst_pts = 0.7
 
-        # ── Signal 5: Fundamentals — ROE & Margins (weight: 15%, max 1.5 pts) ──
+        # ── Signal 5: Fundamentals — ROE & Margins (max 1.5 pts) ──────────
         fund_pts = 0.0
         roe_val = trow.get("roe")
         opm_val = trow.get("operating_margin")
@@ -1201,14 +1541,39 @@ with tab5:
             else: fund_signals += 0
 
         if fund_count > 0:
-            fund_ratio = fund_signals / (fund_count * 2)  # 0 to 1
+            fund_ratio = fund_signals / (fund_count * 2)
             fund_pts = round(fund_ratio * 1.5, 2)
         else:
-            fund_pts = 0.75  # No data = neutral
+            fund_pts = 0.75
 
-        # ── TOTAL SCORE (0 to 10) ──────────────────────────────────────────
-        total_score = sector_pts + cca_pts + range_pts + analyst_pts + fund_pts
-        max_score = 10.0
+        # ── Signal 6: Earnings Quality (max 1.0 pts) [NEW] ───────────────
+        ac_eq = compute_earnings_quality(trow)
+        eq_pts = round((ac_eq["score"] / 100) * 1.0, 2)
+
+        # ── Signal 7: Macro/Rate Environment (max 0.5 pts) [NEW] ──────────
+        ac_macro = get_sector_macro_impact(ac_sector)
+        ac_rate = RATE_SENSITIVITY.get(ac_sector, {})
+        macro_score_raw = ac_macro.get("score", 50)
+        macro_pts = round((macro_score_raw / 100) * 0.5, 2)
+
+        # ── Signal 8: Regulatory Risk — inverse (max 0.5 pts) [NEW] ───────
+        ac_reg = REGULATORY_RISK.get(ac_sector, {})
+        reg_score_raw = ac_reg.get("score", 50)
+        reg_pts = round(((100 - reg_score_raw) / 100) * 0.5, 2)  # Lower risk = higher pts
+
+        # ── Business cycle bonus (max 0.5 pts) ────────────────────────────
+        ac_cycle = SECTOR_CYCLE.get(ac_sector, {})
+        cycle_phase = ac_cycle.get("phase", "")
+        cycle_pts = 0.0
+        if cycle_phase == "Recovery":     cycle_pts = 0.5
+        elif cycle_phase == "Expansion":  cycle_pts = 0.3
+        elif cycle_phase == "Peak":       cycle_pts = 0.0
+        elif cycle_phase == "Contraction": cycle_pts = 0.2  # Contrarian value
+
+        # ── TOTAL SCORE (0 to 12) ─────────────────────────────────────────
+        total_score = (sector_pts + cca_pts + range_pts + analyst_pts +
+                       fund_pts + eq_pts + macro_pts + reg_pts + cycle_pts)
+        max_score = 12.0
 
         # ── Signal breakdowns for display ──────────────────────────────────
         drawdown_str = ""
@@ -1221,76 +1586,87 @@ with tab5:
         roe_str = f"{float(roe_val)*100:.1f}%" if (roe_val and not (isinstance(roe_val, float) and np.isnan(roe_val))) else "N/A"
         opm_str = f"{float(opm_val)*100:.1f}%" if (opm_val and not (isinstance(opm_val, float) and np.isnan(opm_val))) else "N/A"
 
-        # ── Generate Recommendation ────────────────────────────────────────
-        if total_score >= 8.0:
+        # ── Qualitative context ─────────────────────────────────────────────
+        eq_grade_str = ac_eq["grade"]
+        cycle_str = ac_cycle.get("phase", "Unknown")
+        reg_level_str = ac_reg.get("level", "MEDIUM")
+        macro_label_str = ac_macro.get("label", "NEUTRAL")
+
+        # ── Generate Recommendation (12-pt scale) ─────────────────────────
+        if total_score >= 9.5:
             final_rec = "STRONG BUY"
             rec_color = "#00cc44"
             rec_bg    = "#001a00"
             rec_icon  = "◆◆◆"
-            rec_text  = f"{tname} scores exceptionally well across all performance indicators. The stock is {drawdown_str}, trading at a {abs(avg_prem):.1f}% discount to peers, and backed by strong fundamentals (ROE: {roe_str}). Analyst consensus is {rec or 'N/A'}. Combined with a supportive sector environment (richness: {sc:.0f}/100), this is a high-conviction opportunity for long-term investors (2–3 year horizon)."
-        elif total_score >= 6.5:
+            rec_text  = f"{tname} scores exceptionally across all 8 signals — quantitative AND qualitative. The stock is {drawdown_str}, trading at a {abs(avg_prem):.1f}% discount to peers, with strong fundamentals (ROE: {roe_str}, Earnings Quality: {eq_grade_str}). The {ac_sector} sector is in {cycle_str.lower()} phase with a {macro_label_str.lower()} macro environment and {reg_level_str.lower()} regulatory risk. Analyst consensus: {rec or 'N/A'}. High-conviction BUY for a 2-3 year horizon."
+        elif total_score >= 8.0:
             final_rec = "BUY"
             rec_color = "#44ff88"
             rec_bg    = "#001a00"
             rec_icon  = "◆◆"
-            rec_text  = f"{tname} shows a favourable risk-reward profile. The stock is {drawdown_str} and {'trading at a discount to peers' if avg_prem < 0 else 'reasonably valued vs peers'}. Key fundamentals — ROE: {roe_str}, Operating Margin: {opm_str} — support the valuation. Analyst consensus: {rec or 'N/A'}. Suitable for building a position over a 12–18 month horizon."
-        elif total_score >= 5.0:
+            rec_text  = f"{tname} shows a favourable risk-reward across multiple dimensions. {drawdown_str}, {'trading at a discount to peers' if avg_prem < 0 else 'reasonably valued vs peers'}. Earnings quality: {eq_grade_str}. ROE: {roe_str}, Operating Margin: {opm_str}. Sector cycle: {cycle_str.lower()}, macro: {macro_label_str.lower()}. Analyst consensus: {rec or 'N/A'}. Suitable for building a position over 12–18 months."
+        elif total_score >= 6.5:
             final_rec = "ACCUMULATE"
             rec_color = "#88cc44"
             rec_bg    = "#0a1a00"
             rec_icon  = "◆◆"
-            rec_text  = f"{tname} has a mildly positive setup. The stock is {drawdown_str} with {'a modest discount' if avg_prem < 0 else 'fair pricing'} relative to peers ({avg_prem:+.1f}%). Fundamentals are {'solid' if fund_pts > 0.9 else 'adequate'} (ROE: {roe_str}). Consider accumulating on dips rather than a lump-sum entry. Sector backdrop: {sec_zl.lower()} (score: {sc:.0f}/100)."
-        elif total_score >= 3.5:
+            rec_text  = f"{tname} has a mildly positive setup. {drawdown_str} with {'a modest discount' if avg_prem < 0 else 'fair pricing'} relative to peers ({avg_prem:+.1f}%). Earnings quality: {eq_grade_str}. Fundamentals are {'solid' if fund_pts > 0.9 else 'adequate'} (ROE: {roe_str}). Sector in {cycle_str.lower()} phase. Macro: {macro_label_str.lower()}, regulatory risk: {reg_level_str.lower()}. Consider accumulating on dips."
+        elif total_score >= 4.5:
             final_rec = "HOLD / WAIT"
             rec_color = "#ffaa00"
             rec_bg    = "#1a0f00"
             rec_icon  = "◆"
-            rec_text  = f"{tname} presents a mixed picture. The stock is {drawdown_str} and trades at {avg_prem:+.1f}% vs peer median. {'Analyst consensus leans positive' if 'BUY' in rec_upper else 'Analyst consensus is neutral/mixed'}. For existing holders — continue holding. For new investors — wait for a 10–15% correction for a better entry point. No urgency to act."
-        elif total_score >= 2.0:
+            rec_text  = f"{tname} presents a mixed picture. {drawdown_str}, trades at {avg_prem:+.1f}% vs peer median. Earnings quality: {eq_grade_str}. {'Analyst consensus leans positive' if 'BUY' in rec_upper else 'Analyst consensus is neutral'}. Sector in {cycle_str.lower()} phase. For existing holders — continue holding. For new investors — wait for a 10–15% correction for a better entry point."
+        elif total_score >= 3.0:
             final_rec = "REDUCE / AVOID"
             rec_color = "#ff6644"
             rec_bg    = "#1a0800"
             rec_icon  = "◆"
-            rec_text  = f"{tname} has an unfavourable risk-reward at current levels. The stock trades at a {avg_prem:+.1f}% premium to peers, is {drawdown_str}, and {'fundamentals do not justify the premium' if fund_pts < 0.9 else 'while fundamentals are decent, they are priced in'}. {'The sector is also expensive' if sc > 65 else 'Sector support is limited'}. Existing holders should consider trimming. Avoid fresh entries until the stock corrects."
+            rec_text  = f"{tname} has unfavourable risk-reward at current levels. Trades at {avg_prem:+.1f}% vs peers, {drawdown_str}. {'Fundamentals do not justify the premium' if fund_pts < 0.9 else 'Fundamentals are decent but priced in'}. Earnings quality: {eq_grade_str}. Regulatory risk: {reg_level_str.lower()}. {'Sector is also expensive' if sc > 65 else 'Limited sector support'}. Consider trimming."
         else:
             final_rec = "STRONG AVOID"
             rec_color = "#ff3333"
             rec_bg    = "#1a0000"
             rec_icon  = "◆◆◆"
-            rec_text  = f"{tname} is flashing red across multiple indicators. The stock is expensive vs peers ({avg_prem:+.1f}% premium), {'near its 52-week high with limited upside' if (range_pct and range_pct > 85) else f'{drawdown_str}'}, and {'the sector is overheated' if sc > 65 else 'sector support is absent'} (richness: {sc:.0f}/100). {'Analyst consensus is bearish' if 'SELL' in rec_upper else 'Risk-reward is heavily skewed to the downside'}. Avoid new positions. Existing holders should consider booking profits."
+            rec_text  = f"{tname} is flashing red across multiple indicators. Expensive vs peers ({avg_prem:+.1f}%), {'near 52-week high' if (range_pct and range_pct > 85) else drawdown_str}. {'Sector overheated' if sc > 65 else 'No sector support'} (richness: {sc:.0f}/100). Earnings quality: {eq_grade_str}. Regulatory risk: {reg_level_str.lower()}. {'Analysts bearish' if 'SELL' in rec_upper else 'Risk-reward heavily skewed down'}. Avoid entirely."
 
-        # ── Signal breakdown cards ─────────────────────────────────────────
-        st.markdown(f"""
-        <div style='background:#050505;border:1px solid #1a1a1a;padding:10px 16px;margin:8px 0;
-                     display:flex;gap:12px;flex-wrap:wrap'>
-          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
-            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>SECTOR</div>
-            <div style='font-size:14px;font-weight:700;color:{sec_zc}'>{sector_pts:.1f}<span style='font-size:9px;color:#333'>/2.5</span></div>
-          </div>
-          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
-            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>VS PEERS</div>
-            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if cca_pts >= 1.5 else ("#ff3333" if cca_pts < 0.8 else "#ffaa00")}'>{cca_pts:.1f}<span style='font-size:9px;color:#333'>/2.5</span></div>
-          </div>
-          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
-            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>52W RANGE</div>
-            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if range_pts >= 1.2 else ("#ff3333" if range_pts < 0.6 else "#ffaa00")}'>{range_pts:.1f}<span style='font-size:9px;color:#333'>/2.0</span></div>
-          </div>
-          <div style='flex:1;min-width:80px;text-align:center;padding:6px;border-right:1px solid #111'>
-            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>ANALYSTS</div>
-            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if analyst_pts >= 1.0 else ("#ff3333" if analyst_pts < 0.5 else "#ffaa00")}'>{analyst_pts:.1f}<span style='font-size:9px;color:#333'>/1.5</span></div>
-          </div>
-          <div style='flex:1;min-width:80px;text-align:center;padding:6px'>
-            <div style='font-size:8px;color:#444;letter-spacing:.12em;text-transform:uppercase'>FUNDAMENT.</div>
-            <div style='font-size:14px;font-weight:700;color:{"#00cc44" if fund_pts >= 0.9 else ("#ff3333" if fund_pts < 0.5 else "#ffaa00")}'>{fund_pts:.1f}<span style='font-size:9px;color:#333'>/1.5</span></div>
-          </div>
-        </div>""", unsafe_allow_html=True)
+        # ── Signal breakdown cards (8 signals) ──────────────────────────────
+        def _sig_color(pts, max_pts):
+            ratio = pts / max_pts if max_pts > 0 else 0
+            if ratio >= 0.6: return "#00cc44"
+            elif ratio >= 0.3: return "#ffaa00"
+            else: return "#ff3333"
+
+        signals = [
+            ("SECTOR", sector_pts, 2.0),
+            ("VS PEERS", cca_pts, 2.0),
+            ("52W RANGE", range_pts, 1.5),
+            ("ANALYSTS", analyst_pts, 1.5),
+            ("FUNDAMENT.", fund_pts, 1.5),
+            ("EARN QUAL", eq_pts, 1.0),
+            ("MACRO", macro_pts, 0.5),
+            ("REG RISK", reg_pts, 0.5),
+        ]
+        if cycle_pts > 0:
+            signals.append(("BIZ CYCLE", cycle_pts, 0.5))
+
+        cards_html = "<div style='background:#050505;border:1px solid #1a1a1a;padding:10px 12px;margin:8px 0;display:flex;gap:6px;flex-wrap:wrap'>"
+        for i, (label, pts, max_p) in enumerate(signals):
+            border = "border-right:1px solid #111;" if i < len(signals)-1 else ""
+            c = _sig_color(pts, max_p)
+            cards_html += f"""<div style='flex:1;min-width:65px;text-align:center;padding:5px;{border}'>
+              <div style='font-size:7px;color:#444;letter-spacing:.1em;text-transform:uppercase'>{label}</div>
+              <div style='font-size:13px;font-weight:700;color:{c}'>{pts:.1f}<span style='font-size:8px;color:#333'>/{max_p:.1f}</span></div>
+            </div>"""
+        cards_html += "</div>"
+        st.markdown(cards_html, unsafe_allow_html=True)
 
         st.markdown(f"""
         <div style='background:{rec_bg};border:2px solid {rec_color};padding:24px 24px;margin-top:8px'>
           <div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:16px'>
             <div>
               <div style='font-size:9px;color:{rec_color};letter-spacing:.2em;text-transform:uppercase;margin-bottom:6px'>
-                TERMINAL RECOMMENDATION
+                TERMINAL RECOMMENDATION · 8-SIGNAL COMPOSITE
               </div>
               <div style='font-size:28px;font-weight:700;color:{rec_color};letter-spacing:.06em'>
                 {rec_icon} &nbsp; {final_rec}
@@ -1301,7 +1677,8 @@ with tab5:
               <div>STOCK VS PEERS: <span style='color:{stk_sig_c}'>{avg_prem:+.1f}% AVG</span></div>
               <div>52W POSITION: <span style='color:#ccc'>{drawdown_str or "N/A"}</span></div>
               <div>ANALYST: <span style='color:#ccc'>{rec or "N/A"}</span> &nbsp;·&nbsp; ROE: <span style='color:#ccc'>{roe_str}</span></div>
-              <div>SECTOR: <span style='color:{sec_zc}'>{sc:.0f}/100 ({sec_zl.upper()})</span></div>
+              <div>EARNINGS: <span style='color:{ac_eq["color"]}'>{eq_grade_str} ({ac_eq["score"]})</span> &nbsp;·&nbsp; CYCLE: <span style='color:#ccc'>{cycle_str}</span></div>
+              <div>SECTOR: <span style='color:{sec_zc}'>{sc:.0f}/100 ({sec_zl.upper()})</span> &nbsp;·&nbsp; MACRO: <span style='color:{ac_macro["color"]}'>{macro_label_str}</span></div>
             </div>
           </div>
           <div style='font-size:12px;color:#cccccc;line-height:1.9;border-top:1px solid {rec_color}33;
@@ -1310,11 +1687,11 @@ with tab5:
           </div>
           <div style='margin-top:16px;padding:10px 14px;background:rgba(0,0,0,0.4);
                        font-size:9px;color:#555;letter-spacing:.06em;line-height:1.8'>
-            ⚠ DISCLAIMER: This recommendation is based on quantitative signals —
-            peer comparison, 52-week price action, analyst consensus, and fundamental metrics.
-            It does NOT account for: earnings quality, management changes, macro outlook,
-            interest rate cycle, regulatory risk, or company-specific news.
-            Always conduct your own research before making investment decisions.
+            ⚠ DISCLAIMER: This recommendation incorporates 8 quantitative and qualitative signals —
+            peer comparison, 52-week price action, analyst consensus, fundamental metrics,
+            earnings quality, macro/interest rate outlook, regulatory risk, and business cycle positioning.
+            While comprehensive, it uses curated macro data (updated {MACRO_DATA['last_updated']}) and
+            does not replace professional financial advice. Always conduct your own research.
           </div>
         </div>""", unsafe_allow_html=True)
 
