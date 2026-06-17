@@ -487,7 +487,7 @@ def render_trading_intelligence_tab():
             paper_bgcolor='#000000',
             plot_bgcolor='#050505',
             xaxis=dict(showgrid=True, gridcolor='#111111', tickfont=dict(color='#888888', family='monospace')),
-            yaxis=dict(showgrid=True, gridcolor='#111111', tickfont=dict(color='#888888', family='monospace'), suffix='%'),
+            yaxis=dict(showgrid=True, gridcolor='#111111', tickfont=dict(color='#888888', family='monospace'), ticksuffix='%'),
             height=200,
             margin=dict(l=30, r=10, t=10, b=10),
             showlegend=False
@@ -518,7 +518,7 @@ def render_trading_intelligence_tab():
             paper_bgcolor='#000000',
             plot_bgcolor='#050505',
             xaxis=dict(showgrid=True, gridcolor='#111111', tickfont=dict(color='#888888', family='monospace')),
-            yaxis=dict(showgrid=True, gridcolor='#111111', tickfont=dict(color='#888888', family='monospace'), suffix='%'),
+            yaxis=dict(showgrid=True, gridcolor='#111111', tickfont=dict(color='#888888', family='monospace'), ticksuffix='%'),
             height=200,
             margin=dict(l=30, r=10, t=10, b=10),
             showlegend=False
