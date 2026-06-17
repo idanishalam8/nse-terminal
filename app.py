@@ -19,18 +19,20 @@ st.set_page_config(
 
 
 # ── MARKET HOURS & AUTO-REFRESH ───────────────────────────────────────────────
-def is_market_hours() -> bool:
-    """Check if Indian stock market is currently open (9:15 AM – 3:30 PM IST, Mon-Fri)."""
-    now = datetime.now()  # Server time — adjust if needed
-    # IST offset: UTC+5:30
-    # On Streamlit Cloud servers are UTC, so we add 5:30
+def get_ist_now() -> datetime:
+    """Get current time in IST (India Standard Time)."""
     try:
         import pytz
         ist = pytz.timezone('Asia/Kolkata')
-        now = datetime.now(ist)
+        return datetime.now(ist)
     except ImportError:
         # If pytz not available, assume local time is IST
-        pass
+        return datetime.now()
+
+
+def is_market_hours() -> bool:
+    """Check if Indian stock market is currently open (9:15 AM – 3:30 PM IST, Mon-Fri)."""
+    now = get_ist_now()
     
     weekday = now.weekday()  # 0=Mon ... 6=Sun
     if weekday >= 5:  # Saturday/Sunday
@@ -51,13 +53,13 @@ def get_refresh_interval() -> int:
 
 # ── Auto-refresh logic ────────────────────────────────────────────────────────
 if "last_refresh_time" not in st.session_state:
-    st.session_state.last_refresh_time = datetime.now()
+    st.session_state.last_refresh_time = get_ist_now()
 
 refresh_interval = get_refresh_interval()
-time_since_refresh = (datetime.now() - st.session_state.last_refresh_time).total_seconds()
+time_since_refresh = (get_ist_now() - st.session_state.last_refresh_time).total_seconds()
 
 if time_since_refresh > refresh_interval:
-    st.session_state.last_refresh_time = datetime.now()
+    st.session_state.last_refresh_time = get_ist_now()
     st.cache_data.clear()
     st.rerun()
 
@@ -283,11 +285,11 @@ TICKER_NAMES = {t: f"{d['name']}  [{t.replace('.NS','')}]" for t, d in ALL_TICKE
 # Cached news loaders (15-min TTL)
 @st.cache_data(ttl=900, show_spinner=False)
 def load_sector_news(sector: str):
-    return fetch_sector_news(sector, max_items=6)
+    return fetch_sector_news(sector, max_items=5)
 
 @st.cache_data(ttl=900, show_spinner=False)
 def load_company_news(company_name: str, ticker: str):
-    return fetch_company_news(company_name, ticker, max_items=6)
+    return fetch_company_news(company_name, ticker, max_items=5)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -296,6 +298,7 @@ def load_company_news(company_name: str, ticker: str):
 # Fallback: Yahoo Finance → Static data
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Compute TTL dynamically on each run (not fixed at module load)
 _live_ttl = 300 if is_market_hours() else 1800  # 5 min market / 30 min off
 _idx_ttl  = 120 if is_market_hours() else 1800  # 2 min market / 30 min off
 
@@ -354,12 +357,13 @@ with st.sidebar:
     st.markdown("<div style='border-top:1px solid #111;margin:10px 0'></div>", unsafe_allow_html=True)
 
     if st.button("⟳  REFRESH NOW", use_container_width=True):
-        st.session_state.last_refresh_time = datetime.now()
+        st.session_state.last_refresh_time = get_ist_now()
         st.cache_data.clear()
         st.success("CACHE CLEARED — FETCHING LIVE DATA"); time.sleep(1); st.rerun()
 
     # ── Smart data source display ──────────────────────────────────────────
-    now = datetime.now().strftime("%H:%M:%S")
+    now_ist = get_ist_now()
+    now = now_ist.strftime("%H:%M:%S")
     mkt_status = "OPEN" if is_market_hours() else "CLOSED"
     mkt_color  = "#00cc44" if is_market_hours() else "#ff3333"
     refresh_sec = get_refresh_interval()
@@ -416,7 +420,7 @@ richness   = build_richness_series(pct_matrix)
 
 
 # ── TOPBAR ────────────────────────────────────────────────────────────────────
-now_str = datetime.now().strftime("%d %b %Y  %H:%M IST").upper()
+now_str = get_ist_now().strftime("%d %b %Y  %H:%M IST").upper()
 mkt_tag = "MARKET OPEN" if is_market_hours() else "MARKET CLOSED"
 st.markdown(f"""
 <div class='bb-topbar'>
@@ -1401,19 +1405,30 @@ with tab5:
                     pm   = row.get("Peer Median")
                     prem = row.get("Premium/Disc %")
                     imp  = row.get("Implied Price", "N/A")
-                    color = "#ff3333" if (prem and float(prem)>10) else                             ("#00cc44" if (prem and float(prem)<-10) else "#888")
+                    # NaN-safe value extraction
+                    tv_safe = float(tv) if (tv is not None and not (isinstance(tv, float) and np.isnan(tv))) else None
+                    pm_safe = float(pm) if (pm is not None and not (isinstance(pm, float) and np.isnan(pm))) else None
+                    prem_safe = float(prem) if (prem is not None and not (isinstance(prem, float) and np.isnan(prem))) else None
+                    color = "#ff3333" if (prem_safe is not None and prem_safe > 10) else \
+                            ("#00cc44" if (prem_safe is not None and prem_safe < -10) else "#888")
                     st.markdown(f"""
                     <div class='bb-mini'>
                       <div class='ml'>{row.get("Metric","")}</div>
-                      <div class='mv' style='color:{color}'>{f"{tv:.1f}x" if tv else "N/A"}</div>
-                      <div class='mp'>PEER: {f"{pm:.1f}x" if pm else "N/A"}</div>
-                      <div class='mc' style='color:{color}'>{f"{float(prem):+.1f}%" if prem else "—"}</div>
+                      <div class='mv' style='color:{color}'>{f"{tv_safe:.1f}x" if tv_safe is not None else "N/A"}</div>
+                      <div class='mp'>PEER: {f"{pm_safe:.1f}x" if pm_safe is not None else "N/A"}</div>
+                      <div class='mc' style='color:{color}'>{f"{prem_safe:+.1f}%" if prem_safe is not None else "—"}</div>
                     </div>""", unsafe_allow_html=True)
 
-            # Stock interpretation
-            premiums = [r["Premium/Disc %"] for _, r in pd_tbl.iterrows()
-                       if r.get("Premium/Disc %") is not None]
-            avg_prem = float(np.mean(premiums)) if premiums else 0
+            # Stock interpretation — filter out NaN premiums before averaging
+            premiums = []
+            for _, r in pd_tbl.iterrows():
+                v = r.get("Premium/Disc %")
+                if v is not None and not (isinstance(v, float) and np.isnan(v)):
+                    premiums.append(float(v))
+            avg_prem = float(np.nanmean(premiums)) if premiums else 0
+            # Final NaN safety — if avg_prem is still NaN, default to 0
+            if np.isnan(avg_prem):
+                avg_prem = 0.0
 
             if avg_prem < -20:
                 stk_interp = f"{tname} trades at an average discount of {abs(avg_prem):.1f}% vs its peer group across all valuation metrics. This means you are paying significantly less than what similar companies cost. This is a potentially undervalued stock within the sector."
@@ -1674,7 +1689,7 @@ with tab5:
             </div>
             <div style='text-align:right;font-size:10px;color:#555;letter-spacing:.08em;line-height:2'>
               <div>COMPOSITE SCORE: <span style='color:{rec_color}'>{total_score:.1f}/{max_score:.0f}</span></div>
-              <div>STOCK VS PEERS: <span style='color:{stk_sig_c}'>{avg_prem:+.1f}% AVG</span></div>
+              <div>STOCK VS PEERS: <span style='color:{stk_sig_c}'>{f"{avg_prem:+.1f}% AVG" if not np.isnan(avg_prem) else "N/A"}</span></div>
               <div>52W POSITION: <span style='color:#ccc'>{drawdown_str or "N/A"}</span></div>
               <div>ANALYST: <span style='color:#ccc'>{rec or "N/A"}</span> &nbsp;·&nbsp; ROE: <span style='color:#ccc'>{roe_str}</span></div>
               <div>EARNINGS: <span style='color:{ac_eq["color"]}'>{eq_grade_str} ({ac_eq["score"]})</span> &nbsp;·&nbsp; CYCLE: <span style='color:#ccc'>{cycle_str}</span></div>

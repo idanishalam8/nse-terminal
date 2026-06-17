@@ -507,7 +507,14 @@ def fetch_all_live(progress_cb=None) -> pd.DataFrame:
     _data_source_info["nse_success"] = nse_ok
     _data_source_info["yahoo_success"] = yahoo_ok
     _data_source_info["nse_fail"] = nse_fail
-    _data_source_info["last_fetch"] = datetime.now().strftime("%H:%M:%S IST")
+    # Get IST time for display
+    try:
+        import pytz
+        ist = pytz.timezone('Asia/Kolkata')
+        ist_now = datetime.now(ist)
+    except ImportError:
+        ist_now = datetime.now()
+    _data_source_info["last_fetch"] = ist_now.strftime("%H:%M:%S IST")
 
     return pd.DataFrame(list(rows_dict.values()))
 

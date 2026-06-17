@@ -769,30 +769,44 @@ SECTOR_NEWS_QUERIES = {
 }
 
 
-def _parse_rss_feed(xml_text: str, max_items: int = 5) -> list:
-    """Parse Google News RSS XML into a list of news items."""
-    items = []
+def _parse_rss_feed(xml_text: str, max_items: int = 5, max_age_days: int = 5) -> list:
+    """Parse Google News RSS XML into a list of news items.
+    
+    Args:
+        xml_text: Raw XML string from Google News RSS
+        max_items: Maximum number of news items to return
+        max_age_days: Maximum age of news items in days (default 5)
+    
+    Returns list of news items sorted by publication date (newest first),
+    filtered to only include items within max_age_days.
+    """
+    all_items = []
     try:
         root = ET.fromstring(xml_text)
         channel = root.find("channel")
         if channel is None:
-            return items
+            return all_items
 
-        for item in channel.findall("item")[:max_items]:
+        for item in channel.findall("item"):
             title = item.findtext("title", "")
             link = item.findtext("link", "")
             pub_date = item.findtext("pubDate", "")
             source_el = item.find("source")
             source = source_el.text if source_el is not None else ""
 
-            # Parse time
+            # Parse time and compute age
             time_ago = ""
+            pub_dt = None
             try:
-                # Google News uses RFC 2822 format
                 from email.utils import parsedate_to_datetime
                 pub_dt = parsedate_to_datetime(pub_date)
                 now = datetime.now(pub_dt.tzinfo) if pub_dt.tzinfo else datetime.now()
                 delta = now - pub_dt
+
+                # Skip items older than max_age_days
+                if delta.days > max_age_days:
+                    continue
+
                 if delta.days > 0:
                     time_ago = f"{delta.days}d ago"
                 elif delta.seconds > 3600:
@@ -802,16 +816,30 @@ def _parse_rss_feed(xml_text: str, max_items: int = 5) -> list:
             except Exception:
                 time_ago = pub_date[:16] if pub_date else ""
 
-            items.append({
+            all_items.append({
                 "title": title,
                 "link": link,
                 "source": source,
                 "time_ago": time_ago,
                 "pub_date": pub_date,
+                "_pub_dt": pub_dt,  # Keep for sorting
             })
     except ET.ParseError as e:
         log.warning(f"RSS parse error: {e}")
-    return items
+
+    # Sort by publication date — newest first
+    # Items with valid pub_dt come first, sorted descending
+    all_items.sort(
+        key=lambda x: x.get("_pub_dt") or datetime.min.replace(tzinfo=None),
+        reverse=True,
+    )
+
+    # Take top max_items and remove internal sort key
+    result = []
+    for item in all_items[:max_items]:
+        item.pop("_pub_dt", None)
+        result.append(item)
+    return result
 
 
 def fetch_sector_news(sector: str, max_items: int = 5) -> list:

@@ -1,4 +1,4 @@
--name: Keep Alive — Ping Every 5 Minutes
+name: Keep Alive — Ping Every 5 Minutes
 
 on:
   schedule:
