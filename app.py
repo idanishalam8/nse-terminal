@@ -277,6 +277,7 @@ from src.charts import (draw_heatmap, draw_ranking, draw_history, draw_radar,
 from src.macro import (SECTOR_CYCLE, MACRO_DATA, RATE_SENSITIVITY, REGULATORY_RISK,
                        PROMOTER_DATA, compute_earnings_quality, fetch_sector_news,
                        fetch_company_news, get_sector_macro_impact)
+from src.intelligence import render_trading_intelligence_tab
 
 SECTOR_LIST  = list(NSE500.keys())
 TICKER_NAMES = {t: f"{d['name']}  [{t.replace('.NS','')}]" for t, d in ALL_TICKERS.items()}
@@ -507,9 +508,9 @@ st.markdown("")
 
 
 # ── TABS ──────────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "SECTOR HEAT MAP", "SECTOR RANKING", "SECTOR DEEP DIVE",
-    "CCA SCREENER", "ACTION CENTRE", "METHODOLOGY"
+    "CCA SCREENER", "ACTION CENTRE", "METHODOLOGY", "GLOBAL & MACRO INTELLIGENCE"
 ])
 
 
@@ -1804,6 +1805,13 @@ Sector-specific weights: Banks use P/BV 60%; Metals use EV/EBITDA 50%.
 | 65–80 | Expensive | Above average |
 | 80–100 | Very Expensive | Near historical peak |
     """)
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# TAB 7 · GLOBAL & MACRO INTELLIGENCE
+# ────────────────────────────────────────────────────────────────────────────
+with tab7:
+    render_trading_intelligence_tab()
 
 
 # ── FOOTER ────────────────────────────────────────────────────────────────────
