@@ -1,6 +1,7 @@
 # intelligence.py — Trading Intelligence Engine for NSE Valuation Terminal
 import logging
 import requests
+import textwrap
 import pandas as pd
 import numpy as np
 import streamlit as st
@@ -403,11 +404,16 @@ def get_cross_asset_correlations() -> pd.DataFrame:
     return pd.DataFrame(CROSS_ASSET_CORRELATION)
 
 
+def _markdown(html_text: str):
+    """Helper to automatically dedent multi-line HTML strings and allow HTML in Streamlit."""
+    st.markdown(textwrap.dedent(html_text), unsafe_allow_html=True)
+
+
 def render_trading_intelligence_tab():
     """
     Renders the Bloomberg-style Trading Intelligence tab in app.py.
     """
-    st.markdown("<div class='bb-sec'>GLOBAL & MACRO TRADING INTELLIGENCE &nbsp;·&nbsp; SOVEREIGN YIELD CURVES &nbsp;·&nbsp; CROSS-ASSET CORRELATIONS</div>", unsafe_allow_html=True)
+    _markdown("<div class='bb-sec'>GLOBAL & MACRO TRADING INTELLIGENCE &nbsp;·&nbsp; SOVEREIGN YIELD CURVES &nbsp;·&nbsp; CROSS-ASSET CORRELATIONS</div>")
 
     with st.spinner("Fetching global market data..."):
         state = get_global_market_state()
@@ -415,43 +421,43 @@ def render_trading_intelligence_tab():
     # ── 1. GLOBAL KEY INDICATORS GRID ──────────────────────────────────────────
     mcol1, mcol2, mcol3, mcol4, mcol5 = st.columns(5)
     with mcol1:
-        st.markdown(f"""
+        _markdown(f"""
         <div class='bb-card'>
           <div class='lbl'>US CPI INFLATION (YoY)</div>
           <div class='val' style='color:#ffaa00'>{state["us_cpi_yoy"]:.2f}%</div>
           <div class='sub'>SOURCE: FRED</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
     with mcol2:
-        st.markdown(f"""
+        _markdown(f"""
         <div class='bb-card'>
           <div class='lbl'>US FED FUNDS RATE</div>
           <div class='val' style='color:#ffaa00'>{state["us_interest_rate"]:.2f}%</div>
           <div class='sub'>FED TARGET POLICY</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
     with mcol3:
-        st.markdown(f"""
+        _markdown(f"""
         <div class='bb-card'>
           <div class='lbl'>INDIA CPI INFLATION (YoY)</div>
           <div class='val' style='color:#ffaa00'>{state["india_cpi_yoy"]:.2f}%</div>
           <div class='sub'>SOURCE: FRED/RBI</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
     with mcol4:
-        st.markdown(f"""
+        _markdown(f"""
         <div class='bb-card'>
           <div class='lbl'>RBI REPO INTEREST RATE</div>
           <div class='val' style='color:#ff6600'>{state["india_repo_rate"]:.2f}%</div>
           <div class='sub'>STANCE: NEUTRAL</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
     with mcol5:
         chg_val = state["usd_inr_chg"]
         c_color = "#00cc44" if chg_val <= 0 else "#ff3333" # Inverted for currency slide
         c_arrow = "▲" if chg_val > 0 else "▼"
-        st.markdown(f"""
+        _markdown(f"""
         <div class='bb-card'>
           <div class='lbl'>USD-INR EXCHANGE RATE</div>
           <div class='val' style='color:#cccccc'>₹{state["usd_inr"]:.2f}</div>
           <div class='sub' style='color:{c_color}'>{c_arrow} {chg_val:+.2f}% TODAY</div>
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
     st.markdown("")
 
@@ -493,12 +499,12 @@ def render_trading_intelligence_tab():
             showlegend=False
         )
         st.plotly_chart(fig_us, use_container_width=True, config={'displayModeBar': False})
-        st.markdown(f"""
+        _markdown(f"""
         <div style='background:#050505;padding:8px 12px;border:1px solid #111;font-size:10px;line-height:1.6;color:#888'>
           <span style='color:#ff6600;font-weight:700'>CURVE SHAPE:</span> 
           <span style='color:{shape_color};font-weight:700'>{shape}</span><br>
           An inverted curve (short-term rate > long-term rate) historically signals that the Fed funds rate is restrictive, increasing US recession risks and causing FII outflows from emerging markets.
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
     with curve_col2:
         st.markdown("<div style='font-size:11px;color:#00cc44;font-weight:700;margin-bottom:8px'>◆ INDIAN SOVEREIGN YIELD CURVE (G-SEC)</div>", unsafe_allow_html=True)
@@ -524,16 +530,16 @@ def render_trading_intelligence_tab():
             showlegend=False
         )
         st.plotly_chart(fig_in, use_container_width=True, config={'displayModeBar': False})
-        st.markdown("""
+        _markdown("""
         <div style='background:#050505;padding:8px 12px;border:1px solid #111;font-size:10px;line-height:1.6;color:#888'>
           <span style='color:#00cc44;font-weight:700'>EQUITY IMPACT RATIONALE:</span><br>
           Higher G-Sec yields raise the risk-free rate. According to discounting models (DCF), this increases the cost of equity and compresses stock valuation multiples (especially high-PE growth stocks).
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
     st.markdown("")
 
     # ── 3. COMMODITIES MARKET DASHBOARD ────────────────────────────────────────
-    st.markdown("<div class='bb-sec'>COMMODITIES MARKET DASHBOARD &nbsp;·&nbsp; REAL-TIME REALIZATION RATES</div>", unsafe_allow_html=True)
+    _markdown("<div class='bb-sec'>COMMODITIES MARKET DASHBOARD &nbsp;·&nbsp; REAL-TIME REALIZATION RATES</div>")
     ccol1, ccol2, ccol3, ccol4, ccol5 = st.columns(5)
     
     commodities = [
@@ -553,21 +559,21 @@ def render_trading_intelligence_tab():
         with col:
             color = "#00cc44" if chg >= 0 else "#ff3333"
             arrow = "▲" if chg >= 0 else "▼"
-            st.markdown(f"""
+            _markdown(f"""
             <div style='background:#050505;border:1px solid #111;padding:10px 14px'>
               <div style='font-size:9px;color:#ff6600;letter-spacing:.1em;margin-bottom:4px'>{name}</div>
               <div style='font-size:16px;font-weight:700;color:#ccc;display:flex;justify-content:between;align-items:center'>
                 <span>{price:,.2f}<span style='font-size:10px;color:#555;font-weight:400'> {unit}</span></span>
               </div>
               <div style='font-size:10px;color:{color};font-weight:700;margin-top:2px'>{arrow} {chg:+.2f}%</div>
-            </div>""", unsafe_allow_html=True)
+            </div>""")
             with st.expander("ECONOMIC TRANSMISSION", expanded=False):
-                st.markdown(f"<div style='font-size:10px;color:#888;line-height:1.5'>{desc}</div>", unsafe_allow_html=True)
+                _markdown(f"<div style='font-size:10px;color:#888;line-height:1.5'>{desc}</div>")
 
     st.markdown("")
 
     # ── 4. EVENT SIMULATOR ─────────────────────────────────────────────────────
-    st.markdown("<div class='bb-sec'>INTERACTIVE MACRO & GEOPOLITICAL EVENT SIMULATOR</div>", unsafe_allow_html=True)
+    _markdown("<div class='bb-sec'>INTERACTIVE MACRO & GEOPOLITICAL EVENT SIMULATOR</div>")
     
     sim_col1, sim_col2 = st.columns([2, 3])
     
@@ -586,10 +592,10 @@ def render_trading_intelligence_tab():
             key="custom_headline"
         )
         
-        st.markdown("""
+        _markdown("""
         <div style='background:#080808;border:1px solid #111;padding:12px;font-size:10px;color:#666;line-height:1.6;margin-top:10px'>
           💡 <b>How to use:</b> Select a pre-configured template (like Fed Cuts or Middle East escalation) or type a custom financial headline. The engine will parse the context, apply cross-asset correlation rules, and generate a simulated impact report for all sectors and stocks.
-        </div>""", unsafe_allow_html=True)
+        </div>""")
 
     # Resolve active simulation data
     sim_data = None
@@ -603,20 +609,20 @@ def render_trading_intelligence_tab():
 
     with sim_col2:
         if sim_data:
-            st.markdown(f"<div style='font-size:12px;color:#ffaa00;font-weight:700;margin-bottom:2px'>SIMULATED EVENT: {sim_data['title']}</div>", unsafe_allow_html=True)
-            st.markdown(f"<div style='font-size:9px;color:#555;letter-spacing:.08em;margin-bottom:12px;text-transform:uppercase'>CATEGORY: {sim_data['category']}</div>", unsafe_allow_html=True)
+            _markdown(f"<div style='font-size:12px;color:#ffaa00;font-weight:700;margin-bottom:2px'>SIMULATED EVENT: {sim_data['title']}</div>")
+            _markdown(f"<div style='font-size:9px;color:#555;letter-spacing:.08em;margin-bottom:12px;text-transform:uppercase'>CATEGORY: {sim_data['category']}</div>")
             
-            st.markdown(f"""
+            _markdown(f"""
             <div style='background:#080808;border-left:3px solid #ff6600;padding:10px 14px;margin-bottom:12px'>
               <div style='font-size:11px;font-weight:700;color:#ff6600;margin-bottom:4px'>EVENT OVERVIEW & TRANSMISSION CHANNEL</div>
               <div style='font-size:11px;color:#bbb;line-height:1.6'>{sim_data['overview']}</div>
               <div style='font-size:10px;color:#666;margin-top:6px;font-style:italic'><b>Transmission path:</b> {sim_data.get('transmission', '')}</div>
-            </div>""", unsafe_allow_html=True)
+            </div>""")
         else:
-            st.markdown(f"""
+            _markdown("""
             <div style='background:#050505;border:1px dashed #222;height:220px;display:flex;align-items:center;justify-content:center;color:#444;font-size:11px;text-align:center'>
               NO EVENT SELECTED<br>Choose a template or type a headline on the left to start the simulation.
-            </div>""", unsafe_allow_html=True)
+            </div>""")
 
     if sim_data:
         st.markdown("<div style='font-size:11px;color:#ff6600;font-weight:700;margin-top:14px;margin-bottom:10px'>◆ EVENT TRANSMISSION & VOLATILITY SHIFTS</div>", unsafe_allow_html=True)
@@ -636,7 +642,7 @@ def render_trading_intelligence_tab():
                   <td style='font-size:10px;color:#777'>{logic}</td>
                 </tr>
                 """)
-            st.markdown(f"""
+            _markdown(f"""
             <table style='width:100%;font-size:11px'>
               <thead>
                 <tr>
@@ -650,7 +656,7 @@ def render_trading_intelligence_tab():
                 {"".join(asset_rows)}
               </tbody>
             </table>
-            """, unsafe_allow_html=True)
+            """)
             
         with acol2:
             st.markdown("<div style='font-size:10px;color:#888;font-weight:700;margin-bottom:6px'>SECTORAL IMPACT MATRIX</div>", unsafe_allow_html=True)
@@ -666,7 +672,7 @@ def render_trading_intelligence_tab():
                   <td style='font-size:10px;color:#777'>{explanation}</td>
                 </tr>
                 """)
-            st.markdown(f"""
+            _markdown(f"""
             <div style='max-height:240px;overflow-y:auto;border:1px solid #111;padding:2px'>
               <table style='width:100%;font-size:10px'>
                 <thead>
@@ -682,39 +688,39 @@ def render_trading_intelligence_tab():
                 </tbody>
               </table>
             </div>
-            """, unsafe_allow_html=True)
+            """)
 
         st.markdown("")
         # 2. Stock Level Winners & Losers
         wcol1, wcol2 = st.columns([1, 1])
         with wcol1:
-            st.markdown("<div style='background:#050f05;border:1px solid #003300;border-left:4px solid #00cc44;padding:12px'>", unsafe_allow_html=True)
-            st.markdown("<div style='font-size:11px;color:#00cc44;font-weight:700;margin-bottom:6px'>◆ SIMULATED WINNERS (BENEFICIARIES)</div>", unsafe_allow_html=True)
+            _markdown("<div style='background:#050f05;border:1px solid #003300;border-left:4px solid #00cc44;padding:12px'>")
+            _markdown("<div style='font-size:11px;color:#00cc44;font-weight:700;margin-bottom:6px'>◆ SIMULATED WINNERS (BENEFICIARIES)</div>")
             for sym, reason in sim_data["winners"]:
-                st.markdown(f"""
+                _markdown(f"""
                 <div style='margin-bottom:10px;font-size:11px;line-height:1.5'>
                   <span style='color:#00cc44;font-weight:700'>{sym}</span> 
                   <span style='color:#555;font-size:9px'>({STOCK_INFO.get(sym, sym)})</span><br>
                   <span style='color:#888'>{reason}</span>
-                </div>""", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+                </div>""")
+            _markdown("</div>")
             
         with wcol2:
-            st.markdown("<div style='background:#120505;border:1px solid #330000;border-left:4px solid #ff3333;padding:12px'>", unsafe_allow_html=True)
-            st.markdown("<div style='font-size:11px;color:#ff3333;font-weight:700;margin-bottom:6px'>◆ SIMULATED LOSERS (UNDER PERFORMERS)</div>", unsafe_allow_html=True)
+            _markdown("<div style='background:#120505;border:1px solid #330000;border-left:4px solid #ff3333;padding:12px'>")
+            _markdown("<div style='font-size:11px;color:#ff3333;font-weight:700;margin-bottom:6px'>◆ SIMULATED LOSERS (UNDER PERFORMERS)</div>")
             for sym, reason in sim_data["losers"]:
-                st.markdown(f"""
+                _markdown(f"""
                 <div style='margin-bottom:10px;font-size:11px;line-height:1.5'>
                   <span style='color:#ff3333;font-weight:700'>{sym}</span> 
                   <span style='color:#555;font-size:9px'>({STOCK_INFO.get(sym, sym)})</span><br>
                   <span style='color:#888'>{reason}</span>
-                </div>""", unsafe_allow_html=True)
-            st.markdown("</div>", unsafe_allow_html=True)
+                </div>""")
+            _markdown("</div>")
 
     st.markdown("")
 
     # ── 5. LIVE NEWS IMPACT FEED ───────────────────────────────────────────────
-    st.markdown("<div class='bb-sec'>LIVE FINANCIAL NEWS FEED & IMPACT ANALYZER</div>", unsafe_allow_html=True)
+    _markdown("<div class='bb-sec'>LIVE FINANCIAL NEWS FEED & IMPACT ANALYZER</div>")
     
     ntab1, ntab2, ntab3, ntab4, ntab5 = st.tabs([
         "GLOBAL MACRO", "GEOPOLITICS", "BOND MARKETS", "COMMODITIES", "DOMESTIC POLITICS"
@@ -754,7 +760,7 @@ def render_trading_intelligence_tab():
                         tag_color = "background:#111;color:#888;border:1px solid #222"
                         tag_lbl = "NEUTRAL"
                         
-                    st.markdown(f"""
+                    _markdown(f"""
                     <div style='background:#050505;border:1px solid #111;padding:12px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:start;gap:20px'>
                       <div style='flex-grow:1'>
                         <div style='font-size:12px;font-weight:600'><a href='{link}' target='_blank' style='color:#ccc;text-decoration:none'>{title}</a></div>
@@ -767,17 +773,17 @@ def render_trading_intelligence_tab():
                           EST. IMPACT: {tag_lbl}
                         </span>
                       </div>
-                    </div>""", unsafe_allow_html=True)
+                    </div>""")
             else:
-                st.markdown("""
+                _markdown("""
                 <div style='font-size:11px;color:#555;padding:20px 0;text-align:center'>
                   No recent news articles found for this topic (within 5 days).
-                </div>""", unsafe_allow_html=True)
+                </div>""")
 
     st.markdown("")
     
     # ── 6. STRUCTURAL CORRELATION TABLE ────────────────────────────────────────
-    st.markdown("<div class='bb-sec'>CROSS-ASSET STRUTURAL CORRELATIONS REFERENCE</div>", unsafe_allow_html=True)
+    _markdown("<div class='bb-sec'>CROSS-ASSET STRUTURAL CORRELATIONS REFERENCE</div>")
     corr_df = get_cross_asset_correlations()
     
     # Format table manually
@@ -792,7 +798,7 @@ def render_trading_intelligence_tab():
         </tr>
         """)
         
-    st.markdown(f"""
+    _markdown(f"""
     <table style='width:100%;font-size:11px'>
       <thead>
         <tr>
@@ -806,4 +812,4 @@ def render_trading_intelligence_tab():
         {"".join(corr_rows)}
       </tbody>
     </table>
-    """, unsafe_allow_html=True)
+    """)
